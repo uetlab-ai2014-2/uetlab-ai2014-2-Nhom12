@@ -4,6 +4,7 @@ from typing import Any, NamedTuple
 import chess
 
 from .time_manager import TimeManager
+# TODO (Thành viên B/tích hợp): import evaluate từ module evaluation.
 
 # =========================================================================
 # 1. HẰNG SỐ VÀ CÁC CỜ CỦA TRANSPOSITION TABLE
@@ -11,6 +12,9 @@ from .time_manager import TimeManager
 TT_SIZE = 1 << 18       # 262,144 mục (vừa vặn RAM, tốc độ O(1))
 MATE_SCORE = 30_000     # Điểm quy ước khi chiếu hết
 MATE_THRESHOLD = 29_000 # Ngưỡng nhận diện điểm chiếu hết
+DRAW_SCORE = 0
+MAX_DEPTH = 64
+# TODO (Thành viên C): khai báo PIECE_VALS, _MVV_LVA_SCORES và MAX_QSEARCH_DEPTH.
 
 # 3 loại cận (bound) trong thuật toán Alpha-Beta
 TT_EXACT = 0  # Điểm chính xác (alpha < score < beta)
@@ -36,20 +40,61 @@ def score_from_tt(score: int, ply: int) -> int:
     return score
 
 
-# =========================================================================
-# 2. CẤU TRÚC DỮ LIỆU TRANSPOSITION TABLE
-# =========================================================================
+def see(board: chess.Board, move: chess.Move) -> int:
+    """
+    Static Exchange Evaluation (SEE):
+    Ước lượng sự chênh lệch vật chất thuần sau chuỗi đổi quân tại ô đích (move.to_square).
+    Trả về giá trị theo centipawn:
+    >= 0: Nước bắt quân có lợi hoặc đổi ngang giá trị.
+    < 0: Nước bắt quân bị lỗ (ví dụ: lấy Hậu ăn Tốt bị bảo vệ).
+    """
+    to_sq = move.to_square
+    from_sq = move.from_square
+
+    victim = board.piece_type_at(to_sq)
+    if victim is None:
+        if board.is_en_passant(move):
+            victim = chess.PAWN
+        else:
+            return 0
+
+    attacker = board.piece_type_at(from_sq)
+    if attacker is None:
+        return 0
+
+    v_val = PIECE_VALS[victim]
+    a_val = PIECE_VALS[attacker]
+
+    # Nếu quân đi ăn có giá trị <= quân bị ăn (ví dụ Tốt ăn Hậu, Xe ăn Hậu, Tượng ăn Mã...):
+    # Luôn là nước bắt quân có lợi hoặc ít nhất là đổi quân ngang
+    if a_val <= v_val:
+        return v_val - a_val
+
+    # Nếu quân lớn ăn quân nhỏ (ví dụ Hậu ăn Tốt):
+    # Kiểm tra xem ô đích có được đối phương bảo vệ không
+    opp = not board.turn
+    if not board.is_attacked_by(opp, to_sq):
+        return v_val  # Quân treo tự do!
+
+    # Ô đích được bảo vệ: quân tấn công sẽ bị ăn lại và lỗ vật chất
+    return v_val - a_val
+
+
+# ---------------------------------------------------------------------------
+# Transposition Table
+# ---------------------------------------------------------------------------
+
 class TTEntry(NamedTuple):
-    key: Any                     # Khóa băm Zobrist của bàn cờ
-    depth: int                   # Độ sâu đã duyệt
-    score: int                   # Điểm đánh giá (đã qua score_to_tt)
-    flag: int                    # TT_EXACT, TT_LOWER, hoặc TT_UPPER
-    best_move: chess.Move | None # Nước đi tốt nhất tìm thấy tại vị trí này
-    age: int                     # Số thứ tự lượt đi của ván cờ
+    key: Any
+    depth: int
+    score: int
+    flag: int
+    best_move: chess.Move | None
+    age: int
 
 
 class TranspositionTable:
-    """Bảng băm kích thước cố định với cơ chế băm bitmask O(1) và thay thế tối ưu."""
+    """Bảng băm lưu trữ trạng thái tìm kiếm với kích thước cố định."""
 
     def __init__(self, size: int = TT_SIZE) -> None:
         self.size = size
@@ -85,103 +130,480 @@ class TranspositionTable:
             or existing.age != age
             or depth >= existing.depth
         ):
+            # TODO (Thành viên D): bảo đảm entry cùng key được cập nhật dù depth thấp hơn.
             self._table[idx] = TTEntry(key, depth, score, flag, best_move, age)
 
     def clear(self) -> None:
-        """Xóa sạch bảng băm khi bắt đầu trận đấu mới."""
         self._table.clear()
 
 
-# =========================================================================
-# 3. LỚP SEARCHER ĐÃ ĐƯỢC TÍCH HỢP BẢNG CHUYỂN VỊ
-# =========================================================================
+# ---------------------------------------------------------------------------
+# Searcher
+# ---------------------------------------------------------------------------
+
 class Searcher:
     """
-    Yêu cầu dự kiến:
-    - Thuật toán lõi: Negamax với Alpha-Beta Pruning (Thành viên 1).
-    - Tìm kiếm sâu dần: Iterative Deepening Search (IDS) (Thành viên 1 & 2).
-    - Mở rộng chống hiệu ứng đường chân trời: Quiescence Search (QS) (Thành viên 2).
-    - Cấu trúc tăng tốc:
-        + Transposition Table (TT) -> ĐÃ HOÀN THIỆN BỞI Văn Bách
-        + Move Ordering (MVV-LVA, Killer, History) -> Chờ Thành viên 2.
+    Bộ máy tìm kiếm cờ vua Negamax + Alpha-Beta, PVS, LMR, NMP và Aspiration Windows.
     """
 
     def __init__(self) -> None:
-        """
-        Khởi tạo các cấu trúc dữ liệu dùng chung giữa các lượt đi.
-        """
-        # [ĐÃ LÀM XONG]: Bảng chuyển vị và quản lý tuổi ván cờ 
-        self.tt = TranspositionTable(TT_SIZE)
-        self._age: int = 0
+        self.tt = TranspositionTable()
+        self.killer_moves: list[list[chess.Move | None]] = [
+            [None, None] for _ in range(MAX_DEPTH + 16)
+        ]
+        self.history: dict[tuple[chess.Color, int, int], int] = {}
+        self._timeout: bool = False
         self._nodes: int = 0
+        self._age: int = 0
 
-        # TODO (Thành viên 2): Khởi tạo Killer Moves và History Heuristic tại đây nếu cần.
+    def _decay_history(self) -> None:
+        """Làm suy giảm điểm history giữa các lượt đi để tránh tích lũy dữ liệu cũ."""
+        for k in list(self.history.keys()):
+            val = self.history[k] // 2
+            if val > 0:
+                self.history[k] = val
+            else:
+                del self.history[k]
 
-    def search(self, board: chess.Board, tm: TimeManager) -> chess.Move:
+    def _store_killer(self, move: chess.Move, ply: int) -> None:
+        if ply < len(self.killer_moves):
+            if self.killer_moves[ply][0] != move:
+                self.killer_moves[ply][1] = self.killer_moves[ply][0]
+                self.killer_moves[ply][0] = move
+
+    def _update_history(self, move: chess.Move, color: chess.Color, depth: int) -> None:
+        key = (color, move.from_square, move.to_square)
+        self.history[key] = self.history.get(key, 0) + depth * depth
+
+    def _order_moves(
+        self,
+        board: chess.Board,
+        moves: list[chess.Move],
+        ply: int,
+        tt_move: chess.Move | None,
+    ) -> list[chess.Move]:
         """
-        Tìm kiếm và trả về nước đi tối ưu nhất cho bên đi hiện tại.
-        ----------------------------------------------------
-        1. INPUT:
-           - board (chess.Board): Trạng thái bàn cờ hiện tại (hỗ trợ cả chuẩn FEN lẫn Chess960).
-           - tm (TimeManager): Bộ điều phối thời gian cho lượt đi này.
-           
-        2. OUTPUT:
-           - Trả về một đối tượng `chess.Move` BẮT BUỘC nằm trong `list(board.legal_moves)`.
-           
-        3. RÀNG BUỘC THỜI GIAN (TIME INVARIANTS):
-           - Bắt đầu tìm kiếm: gọi `tm.start()`.
-           - Trước mỗi vòng lặp độ sâu mới (IDS): kiểm tra `if not tm.can_start_next_depth(): break`.
-           - Trong các nút tìm kiếm đệ quy: định kỳ kiểm tra `if tm.should_stop(): break/return`.
-           
-        4. TÍNH BẤT BIẾN BÀN CỜ (BOARD IMMUTABILITY):
-           - Tuyệt đối mọi lệnh `board.push(move)` trong lúc duyệt cây đều phải có `board.pop()` tương ứng.
-           - Khi hàm này trả về (dù bình thường hay ngắt do hết giờ), `board.fen()` phải GIỮ NGUYÊN 100%
-             như lúc nhận vào.
+        Sắp xếp nước đi heuristic:
+        1. TT Move (+2,000,000)
+        2. Queen Promotion (+1,200,000)
+        3. Good Captures (SEE >= 0) kết hợp MVV-LVA (+1,000,000)
+        4. Killer Move 1 (+700,000)
+        5. Killer Move 2 (+650,000)
+        6. History Heuristic (+1 .. +500,000)
+        7. Bad Captures (SEE < 0) (+50,000 + SEE)
+        8. Các nước phong cấp khác (+40,000)
+        9. Quiet moves
         """
+        killers = self.killer_moves[ply] if ply < len(self.killer_moves) else [None, None]
+        turn = board.turn
+
+        def score_move(move: chess.Move) -> int:
+            if move == tt_move:
+                return 2_000_000
+
+            if move.promotion == chess.QUEEN:
+                return 1_200_000
+
+            is_capture = board.is_capture(move)
+            if is_capture:
+                victim = board.piece_type_at(move.to_square)
+                attacker = board.piece_type_at(move.from_square)
+                mvv_lva = _MVV_LVA_SCORES[victim] * 10 - _MVV_LVA_SCORES[attacker]
+                see_val = see(board, move)
+
+                if see_val >= 0:
+                    return 1_000_000 + mvv_lva * 100 + see_val
+                else:
+                    return 50_000 + see_val
+
+            if move == killers[0]:
+                return 700_000
+            if move == killers[1]:
+                return 650_000
+
+            if move.promotion is not None:
+                return 40_000
+
+            key = (turn, move.from_square, move.to_square)
+            return min(self.history.get(key, 0), 500_000)
+
+        moves.sort(key=score_move, reverse=True)
+        return moves
+
+    # ------------------------------------------------------------------
+    # Quiescence Search (Tìm kiếm tĩnh lặng)
+    # ------------------------------------------------------------------
+
+    def _quiescence(
+        self,
+        board: chess.Board,
+        alpha: int,
+        beta: int,
+        ply: int,
+        tm: TimeManager,
+        qdepth: int = 0,
+    ) -> int:
+        """
+        Quiescence Search: Chỉ đào sâu các nước bắt quân có lợi và thoát chiếu
+        để khắc phục triệt để hiện tượng chân trời (Horizon Effect).
+        """
+        self._nodes += 1
+
+        # Kiểm tra timeout mỗi 512 nodes
+        if (self._nodes & 511) == 0 and tm.should_stop():
+            self._timeout = True
+            return 0
+
+        if self._timeout:
+            return 0
+
+        # Kiểm tra hòa lặp và 50 nước
+        if board.is_repetition(2) or board.halfmove_clock >= 100:
+            # TODO (Thành viên C): ưu tiên chiếu hết trước khi trả điểm hòa.
+            return DRAW_SCORE
+
+        in_check = board.is_check()
+
+        # Stand-pat: ước lượng giá trị thế cờ hiện tại nếu không đi nước nào
+        if not in_check:
+            stand_pat = evaluate(board)
+            if stand_pat >= beta:
+                return beta
+            # TODO (Thành viên C): kiểm tra Delta Pruning trước khi nâng alpha bằng stand_pat;
+            # điều kiện hiện tại phía dưới không thể đúng sau khi alpha đã được cập nhật.
+            if stand_pat > alpha:
+                alpha = stand_pat
+
+            # Delta Pruning: nếu vị trí quá kém, dù ăn được Hậu (+1000)
+            # vẫn không thể vượt qua alpha thì cắt tỉa luôn nhánh này
+            if stand_pat + 1150 < alpha:
+                return alpha
+
+        if qdepth >= MAX_QSEARCH_DEPTH and not in_check:
+            return alpha
+
+        # Lựa chọn nước đi
+        if in_check:
+            moves = list(board.legal_moves)
+            if not moves:
+                return -(MATE_SCORE - ply)
+        else:
+            # Chỉ xét bắt quân có lợi (SEE >= 0) và phong cấp Hậu
+            moves = [
+                m for m in board.legal_moves
+                if m.promotion == chess.QUEEN or (board.is_capture(m) and see(board, m) >= 0)
+            ]
+
+        if not moves:
+            return alpha
+
+        # Sắp xếp các nước bắt quân trong Quiescence theo MVV-LVA
+        def q_order(m: chess.Move) -> int:
+            if m.promotion == chess.QUEEN:
+                return 1000
+            v = board.piece_type_at(m.to_square)
+            a = board.piece_type_at(m.from_square)
+            return _MVV_LVA_SCORES[v] * 10 - _MVV_LVA_SCORES[a]
+
+        moves.sort(key=q_order, reverse=True)
+
+        for move in moves:
+            board.push(move)
+            try:
+                score = -self._quiescence(board, -beta, -alpha, ply + 1, tm, qdepth + 1)
+            finally:
+                board.pop()
+            if self._timeout:
+                return 0
+
+            if score >= beta:
+                return beta
+            if score > alpha:
+                alpha = score
+
+        return alpha
+
+    # ------------------------------------------------------------------
+    # Negamax với Alpha-Beta Pruning & PVS
+    # ------------------------------------------------------------------
+
+    def _negamax(
+        self,
+        board: chess.Board,
+        depth: int,
+        alpha: int,
+        beta: int,
+        ply: int,
+        tm: TimeManager,
+        allow_nmp: bool = True,
+    ) -> int:
+        """
+        Negamax với Alpha-Beta, Principal Variation Search (PVS), NMP và LMR.
+        """
+        self._nodes += 1
+
+        if (self._nodes & 511) == 0 and tm.should_stop():
+            self._timeout = True
+            return 0
+
+        if self._timeout:
+            return 0
+
+        # Kiểm tra hòa lặp và thiếu quân
+        if ply > 0:
+            if board.is_repetition(2) or board.halfmove_clock >= 100:
+                if board.is_checkmate():
+                    return -(MATE_SCORE - ply)
+                return DRAW_SCORE
+            if board.is_insufficient_material():
+                return DRAW_SCORE
+
+        # --- Tra cứu Transposition Table ---
+        tt_key = board._transposition_key()
+        tt_entry = self.tt.probe(tt_key)
+        tt_move: chess.Move | None = None
+
+        if tt_entry is not None:
+            tt_move = tt_entry.best_move
+            if tt_entry.depth >= depth:
+                tt_score = score_from_tt(tt_entry.score, ply)
+                if tt_entry.flag == TT_EXACT:
+                    return tt_score
+                elif tt_entry.flag == TT_LOWER and tt_score >= beta:
+                    return tt_score
+                elif tt_entry.flag == TT_UPPER and tt_score <= alpha:
+                    return tt_score
+
+        # Khi hết độ sâu: chuyển sang Quiescence Search
+        if depth <= 0:
+            return self._quiescence(board, alpha, beta, ply, tm, 0)
+
+        in_check = board.is_check()
+
+        # --- Null Move Pruning (NMP) ---
+        if allow_nmp and not in_check and depth >= 3 and ply > 0:
+            has_pieces = any(
+                board.pieces(pt, board.turn)
+                for pt in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+            )
+            if has_pieces:
+                r = 2 if depth <= 4 else 3
+                board.push(chess.Move.null())
+                try:
+                    null_score = -self._negamax(
+                        board, depth - 1 - r, -beta, -beta + 1, ply + 1, tm, False
+    )
+                finally:
+                    board.pop()
+
+                if self._timeout:
+                    return 0
+
+                if null_score >= beta:
+                    # TODO (Thành viên C): không cắt tỉa nếu null_score là điểm mate.
+                    return beta
+
+        # Sinh và sắp xếp nước đi
         legal_moves = list(board.legal_moves)
         if not legal_moves:
-            return chess.Move.null()
+            if in_check:
+                return -(MATE_SCORE - ply)
+            return DRAW_SCORE
 
-        if len(legal_moves) == 1:
-            return legal_moves[0]
+        moves = self._order_moves(board, legal_moves, ply, tt_move)
 
-        # Bắt đầu tính giờ và tăng tuổi ván cờ
-        tm.start()
-        self._age += 1
-        self._nodes = 0
+        best_score = -MATE_SCORE - 1
+        best_move: chess.Move | None = None
+        original_alpha = alpha
+        moves_searched = 0
 
-        # Lấy khóa băm của thế cờ hiện tại (python-chess hỗ trợ hoàn hảo cả Chess960)
-        board_key = board._transposition_key()
+        for move in moves:
+            is_capture = board.is_capture(move)
+            gives_check = board.gives_check(move)
 
-        # =========================================================================
-        # [MẪU DÙNG TT 1]: Tra cứu TT ở gốc bàn cờ (Root Probe)
-        # =========================================================================
-        entry = self.tt.probe(board_key)
-        if entry is not None and entry.best_move in legal_moves:
-            best_move = entry.best_move
-        else:
-            best_move = legal_moves[0]
+            board.push(move)
+            try:
+                moves_searched += 1
 
-        # =========================================================================
-        # MOCK IMPLEMENTATION (Dành cho việc chạy thử và test tích hợp bot.py)
-        # TODO (Thành viên 1 & 2): Thay thế đoạn mock này bằng vòng lặp
-        # Iterative Deepening và hàm đệ quy Negamax Alpha-Beta thật.
-        # =========================================================================
-        for move in legal_moves:
-            if board.is_capture(move):
+                # --- Late Move Reductions (LMR) ---
+                # Giảm 1 độ sâu cho các nước đi yên lặng xếp sau; không giảm nếu là nước chiếu
+                do_lmr = (
+                    depth >= 3
+                    and moves_searched >= 4
+                    and not in_check
+                    and not is_capture
+                    and move.promotion is None
+                    and not gives_check
+                    and move != tt_move
+                )
+
+                # --- Principal Variation Search (PVS) ---
+                if moves_searched == 1:
+                    # Nước đầu tiên (PV move): Tìm kiếm với cửa sổ đầy đủ [alpha, beta]
+                    score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, tm, True)
+                else:
+                    # Các nước sau: Tìm kiếm với cửa sổ rỗng [-alpha - 1, -alpha]
+                    r = 1 if do_lmr else 0
+                    score = -self._negamax(board, depth - 1 - r, -alpha - 1, -alpha, ply + 1, tm, True)
+
+                    # Nếu LMR fail-high: tìm kiếm lại đầy đủ không giảm độ sâu
+                    if do_lmr and score > alpha:
+                        score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1, tm, True)
+
+                    # Nếu cửa sổ rỗng fail-high: tìm kiếm lại với cửa sổ đầy đủ [alpha, beta]
+                    if score > alpha and score < beta:
+                        score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, tm, True)
+
+            finally:
+                board.pop()
+
+            if self._timeout:
+                return 0
+
+            if score > best_score:
+                best_score = score
                 best_move = move
+
+            if score > alpha:
+                alpha = score
+
+            if alpha >= beta:
+                # Cắt tỉa Beta Cutoff
+                if not is_capture:
+                    self._store_killer(move, ply)
+                    self._update_history(move, board.turn, depth)
                 break
 
-        # =========================================================================
-        # [MẪU DÙNG TT 2]: Lưu nước đi tốt nhất tìm được vào TT (Root Store)
-        # =========================================================================
-        self.tt.store(
-            key=board_key,
-            depth=1,
-            score=score_to_tt(0, ply=0),
-            flag=TT_EXACT,
-            best_move=best_move,
-            age=self._age,
-        )
+        # Lưu kết quả vào Transposition Table
+        if not self._timeout:
+            if best_score <= original_alpha:
+                flag = TT_UPPER
+            elif best_score >= beta:
+                flag = TT_LOWER
+            else:
+                flag = TT_EXACT
+            tt_score = score_to_tt(best_score, ply)
+            self.tt.store(tt_key, depth, tt_score, flag, best_move, self._age)
+
+        return best_score
+
+    # ------------------------------------------------------------------
+    # Iterative Deepening với Aspiration Windows
+    # ------------------------------------------------------------------
+
+    def search(
+        self,
+        board: chess.Board,
+        tm: TimeManager,
+    ) -> chess.Move:
+        """
+        Tìm kiếm lặp tăng dần độ sâu (Iterative Deepening Search).
+        Kết hợp Aspiration Windows để thu hẹp cửa sổ [alpha, beta] ở gốc.
+        """
+        legal = list(board.legal_moves)
+        if not legal:
+            raise ValueError("No legal moves available")
+
+        if len(legal) == 1:
+            return legal[0]
+
+        best_move = legal[0]
+        self._timeout = False
+        self._nodes = 0
+        self._age += 1
+        self._decay_history()
+        tm.start()
+
+        prev_score = 0
+        aspiration_delta = 40
+
+        for depth in range(1, MAX_DEPTH + 1):
+            if tm.should_stop():
+                break
+
+            if depth > 1 and not tm.can_start_next_depth():
+                break
+
+            self._timeout = False
+            candidate: chess.Move | None = None
+            best_score_this_depth = -MATE_SCORE - 1
+            aspiration_active = (
+                depth >= 4 and abs(prev_score) < MATE_THRESHOLD
+            )
+
+            # Thiết lập Aspiration Window ở depth >= 4
+            if aspiration_active:
+                alpha = max(-MATE_SCORE - 1, prev_score - aspiration_delta)
+                beta = min(MATE_SCORE + 1, prev_score + aspiration_delta)
+            else:
+                alpha = -MATE_SCORE - 1
+                beta = MATE_SCORE + 1
+
+            while True:
+                candidate = None
+                best_score_this_depth = -MATE_SCORE - 1
+
+                tt_entry = self.tt.probe(board._transposition_key())
+                root_tt_move = tt_entry.best_move if tt_entry is not None else None
+
+                moves = self._order_moves(board, list(board.legal_moves), ply=0, tt_move=root_tt_move)
+
+                moves_searched = 0
+                for move in moves:
+                    board.push(move)
+                    try:
+                        moves_searched += 1
+
+                        if moves_searched == 1:
+                            score = -self._negamax(board, depth - 1, -beta, -alpha, 1, tm, True)
+                        else:
+                            score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, 1, tm, True)
+                            if score > alpha and score < beta:
+                                score = -self._negamax(board, depth - 1, -beta, -alpha, 1, tm, True)
+
+                    finally:
+                        board.pop()
+
+                    if self._timeout:
+                        break
+
+                    if score > best_score_this_depth:
+                        best_score_this_depth = score
+                        candidate = move
+
+                    if score > alpha:
+                        alpha = score
+
+                if self._timeout:
+                    break
+
+                # Kiểm tra Aspiration Window fail-low hoặc fail-high
+                if aspiration_active and (
+                    best_score_this_depth <= prev_score - aspiration_delta
+                    or best_score_this_depth >= prev_score + aspiration_delta
+                ):
+                    # Retry with a full window so the search cannot fail again.
+                    alpha = -MATE_SCORE - 1
+                    beta = MATE_SCORE + 1
+                    aspiration_active = False
+                    continue
+
+                break
+
+            if not self._timeout and candidate is not None:
+                best_move = candidate
+                prev_score = best_score_this_depth
+
+                self.tt.store(
+                    board._transposition_key(),
+                    depth,
+                    score_to_tt(best_score_this_depth, 0),
+                    TT_EXACT,
+                    best_move,
+                    self._age,
+                )
+
+                if best_score_this_depth >= MATE_THRESHOLD:
+                    break
 
         return best_move
