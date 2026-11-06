@@ -54,7 +54,7 @@ Tài liệu này được lập nhằm mục đích minh bạch hóa toàn bộ 
 
 ### 2. THÀNH VIÊN 2
 - **Họ và tên / MSSV:** *Lê Văn Việt / 25023069*
-- **Tài khoản Git ghi nhận:** *TODO*
+- **Tài khoản Git ghi nhận:** *thocuong354-cloud*
 
 #### 2.1. Vai trò trong dự án
 - **Theo kế hoạch nhóm:** Chịu trách nhiệm trụ cột *Biểu diễn tri thức chuyên gia & Hàm lượng giá trạng thái (Heuristic Evaluation)*. Xây dựng toàn bộ module `student/evaluation.py`: hệ thống PeSTO Piece-Square Tables (trung cuộc và tàn cuộc), cơ chế Tapered Evaluation theo Game Phase (0..24), cấu trúc Tốt (tốt thông, tốt thông liên kết, tốt cô lập, tốt chồng), hoạt động quân (cặp tượng, xe cột mở/nửa mở/hàng 7, mã tiền đồn), an toàn Vua (Pawn Shield) và nhịp đi (Tempo Bonus).
