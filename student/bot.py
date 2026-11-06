@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import chess
 
 from chesslab_sdk import BotConfig, SearchContext
@@ -29,6 +30,8 @@ class StudentBot:
         """
         self.config = config
         self.searcher = Searcher()
+        if hasattr(config, "seed") and config.seed is not None:
+            random.seed(config.seed)
 
     def choose_move(self, board: chess.Board, context: SearchContext) -> chess.Move:
         """

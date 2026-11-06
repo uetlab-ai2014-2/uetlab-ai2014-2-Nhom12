@@ -191,8 +191,16 @@ def see(board: chess.Board, move: chess.Move) -> int:
     # Nếu quân lớn ăn quân nhỏ (ví dụ Hậu ăn Tốt):
     # Kiểm tra xem ô đích có được đối phương bảo vệ không
     opp = not board.turn
-    if not board.is_attacked_by(opp, to_sq):
+    opp_attackers = board.attackers(opp, to_sq)
+    if not opp_attackers:
         return v_val  # Quân treo tự do!
+
+    # Nếu ô đích được quân ta bảo vệ và quân duy nhất của địch ngắm tới là Vua,
+    # Vua địch không thể ăn vì sẽ bị chiếu phạm luật!
+    if board.is_attacked_by(board.turn, to_sq):
+        king_sq = board.king(opp)
+        if king_sq is not None and opp_attackers == chess.SquareSet([king_sq]):
+            return v_val
 
     # Ô đích được bảo vệ: quân tấn công sẽ bị ăn lại và lỗ vật chất
     return v_val - a_val
@@ -495,15 +503,16 @@ class Searcher:
                 return -(MATE_SCORE - ply)
         else:
             # Không bị chiếu: sinh thẳng các nước bắt quân qua generate_legal_captures()
+            # Giữ lại các nước bắt quân có lợi (SEE >= 0) hoặc nước bắt quân gây chiếu (để không bỏ sót đòn sát thủ)
             promo_rank = chess.BB_RANK_7 if board.turn == chess.WHITE else chess.BB_RANK_2
             if board.pawns & promo_rank:
                 caps = list(board.generate_legal_captures())
-                moves = [m for m in caps if see(board, m) >= 0]
+                moves = [m for m in caps if see(board, m) >= 0 or board.gives_check(m)]
                 for m in board.legal_moves:
                     if m.promotion == chess.QUEEN and not board.is_capture(m):
                         moves.append(m)
             else:
-                moves = [m for m in board.generate_legal_captures() if see(board, m) >= 0]
+                moves = [m for m in board.generate_legal_captures() if see(board, m) >= 0 or board.gives_check(m)]
 
         if not moves:
             return alpha
@@ -522,6 +531,8 @@ class Searcher:
 
         moves.sort(key=q_order, reverse=True)
 
+        best_score = -MATE_SCORE - 1 if in_check else alpha
+
         for move in moves:
             board.push(move)
             try:
@@ -532,12 +543,14 @@ class Searcher:
             if self._timeout:
                 return 0
 
+            if score > best_score:
+                best_score = score
             if score >= beta:
                 return beta
             if score > alpha:
                 alpha = score
 
-        return alpha
+        return best_score if in_check else alpha
 
     # ------------------------------------------------------------------
     # 7. THUẬT TOÁN TÌM KIẾM NEGAMAX VỚI ALPHA-BETA PRUNING & PVS
@@ -613,21 +626,26 @@ class Searcher:
 
         in_check = board.is_check()
 
+        # Tính toán lượng giá tĩnh một lần duy nhất khi không bị chiếu
+        # Dùng chung cho RFP, NMP và Futility Pruning để tránh gọi lại evaluate()
+        static_eval = evaluate(board) if not in_check else None
+
         # --- 1. Reverse Futility Pruning (RFP / Static Null Move) - Thần Uy Cắt Tỉa ---
         # Cắt tỉa siêu hiệu quả ở độ sâu 1 và 2 nếu vị trí tĩnh đã quá áp đảo
         if not in_check and depth <= 2 and abs(beta) < MATE_THRESHOLD and ply > 0:
             has_pieces = bool(board.occupied_co[board.turn] & ~(board.pawns | board.kings))
-            if has_pieces:
-                eval_score = evaluate(board)
+            if has_pieces and static_eval is not None:
                 rfp_margin = 120 * depth  # 120 CP ở depth 1, 240 CP ở depth 2
-                if eval_score - rfp_margin >= beta:
-                    return eval_score - rfp_margin
+                if static_eval - rfp_margin >= beta:
+                    return static_eval - rfp_margin
 
         # --- 2. Null Move Pruning (NMP) - Hư Vô Thần Bộ (Nhượng Nhất Chiêu) ---
         if allow_nmp and not in_check and depth >= 3 and ply > 0:
             # Kiểm tra nhanh bằng bitboard: có quân cờ lớn (không phải Tốt, Vua) để tránh bẫy Zugzwang
+            # Chỉ thực hiện Null Move khi static_eval >= beta: nếu điểm tĩnh không vượt được beta,
+            # nhường lượt đi cho đối thủ chắc chắn không thể vượt beta
             has_pieces = bool(board.occupied_co[board.turn] & ~(board.pawns | board.kings))
-            if has_pieces:
+            if has_pieces and static_eval is not None and static_eval >= beta:
                 r = 2 if depth <= 4 else 3
                 board.push(chess.Move.null())
                 try:
@@ -656,9 +674,6 @@ class Searcher:
         best_move: chess.Move | None = None
         original_alpha = alpha
         moves_searched = 0
-
-        # Lượng giá tĩnh cho Futility Pruning tại depth 1
-        static_eval = evaluate(board) if (depth == 1 and not in_check) else None
 
         for move in moves:
             is_capture = board.is_capture(move)
@@ -816,13 +831,14 @@ class Searcher:
                 alpha = -MATE_SCORE - 1
                 beta = MATE_SCORE + 1
 
+            research_move: chess.Move | None = None
             while True:
                 candidate = None
                 best_score_this_depth = -MATE_SCORE - 1
 
-                # Lấy nước đi tốt nhất từ TT tại gốc để ưu tiên duyệt đầu tiên
+                # Lấy nước đi tốt nhất từ TT tại gốc (hoặc nước gây fail-high ở lần duyệt trước) để ưu tiên duyệt đầu tiên
                 tt_entry = self.tt.probe(board._transposition_key())
-                root_tt_move = tt_entry.best_move if tt_entry is not None else None
+                root_tt_move = research_move or (tt_entry.best_move if tt_entry is not None else None)
 
                 moves = self._order_moves(board, list(board.legal_moves), ply=0, tt_move=root_tt_move)
 
@@ -861,6 +877,7 @@ class Searcher:
                     best_score_this_depth <= prev_score - aspiration_delta
                     or best_score_this_depth >= prev_score + aspiration_delta
                 ):
+                    research_move = candidate
                     alpha = -MATE_SCORE - 1
                     beta = MATE_SCORE + 1
                     aspiration_active = False

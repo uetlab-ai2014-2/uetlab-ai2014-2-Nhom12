@@ -46,17 +46,17 @@ def compute_budget_ms(
 
     Thuật toán phân bổ thời gian thích ứng (Adaptive Time Allocation):
     1. Trừ hao an toàn (_OVERHEAT_MS) để tính thời gian khả dụng thực tế.
-    2. Chế độ Hoảng loạn (Panic Mode - dưới 3.5s): Ép ngân sách xuống 40ms,
-       nhường toàn bộ thời gian cho độ trễ 500ms của hệ thống, chống rụng kim.
-    3. Chế độ Nguy cấp (Critical Mode - dưới 8s): Thu hẹp ngân sách trong khoảng 50ms - 150ms.
+    2. Chế độ Hoảng loạn (Panic Mode - dưới 3.5s): Ép ngân sách xuống 35ms,
+       nhường toàn bộ thời gian cho độ trễ 500-1000ms của hệ thống, chống rụng kim.
+    3. Chế độ Nguy cấp (Critical Mode - dưới 8s): Thu hẹp ngân sách trong khoảng 40ms - 100ms.
     4. Ước tính số nước đi còn lại (moves_left) theo số ply đã qua:
        - Khai cuộc (< 10 nước): 35 nước.
        - Trung cuộc sớm (< 30 nước): 30 nước.
        - Trung cuộc muộn (< 50 nước): 25 nước.
        - Tàn cuộc (>= 50 nước): 20 nước.
-    5. Điều chỉnh theo số nước đi vật lý tối đa cho phép bởi độ trễ hệ thống:
-       max_physical_moves = safe_remaining // 700ms.
-    6. Áp trần ngân sách không vượt quá 12% quỹ thời gian còn lại và sàn tối thiểu 60ms.
+    5. Khấu trừ độ trễ hệ thống: time_per_move = safe_remaining // moves_left,
+       budget = time_per_move - _AVG_SYSTEM_DELAY_MS. Đảm bảo bot sống sót đủ moves_left nước.
+    6. Áp trần ngân sách không vượt quá 8% quỹ thời gian còn lại và sàn tối thiểu 50ms.
 
     Args:
         time_remaining_ms: Tổng thời gian thi đấu còn lại của bot (ms).
@@ -69,13 +69,13 @@ def compute_budget_ms(
     safe_remaining = max(0, time_remaining_ms - _OVERHEAT_MS)
 
     # 1. Chế độ Hoảng loạn (Panic Mode): còn dưới 3.5s
-    # Phải đi cực nhanh (40ms) để nhường toàn bộ thời gian cho độ trễ 500ms của hệ thống
+    # Phải đi cực nhanh (35ms) để nhường toàn bộ thời gian cho độ trễ của hệ thống
     if safe_remaining < _PANIC_MS:
-        return 40
+        return 35
 
     # 2. Chế độ Nguy cấp (Critical Mode): còn dưới 8s
     if safe_remaining < _CRITICAL_MS:
-        return max(50, min(150, safe_remaining // 15))
+        return max(40, min(100, safe_remaining // 25))
 
     # 3. Ước tính số nước đi còn lại theo tiến độ thực tế của ván cờ
     moves_played = ply // 2
@@ -88,19 +88,18 @@ def compute_budget_ms(
     else:
         moves_left = 20
 
-    # Giới hạn số nước đi thực tế tối đa mà đồng hồ cho phép với độ trễ ~700ms của GameController
-    max_physical_moves = max(1, safe_remaining // _AVG_SYSTEM_DELAY_MS)
-    moves_left = min(moves_left, max_physical_moves)
+    # Phân bổ tổng thời gian mỗi nước (bao gồm cả độ trễ hệ thống)
+    time_per_move = safe_remaining // moves_left
 
-    # Ngân sách cơ sở phân bổ đều cho số nước dự kiến
-    budget = safe_remaining // moves_left
+    # Ngân sách cho search = thời gian mỗi nước trừ đi độ trễ trung bình của GameController
+    budget = time_per_move - _AVG_SYSTEM_DELAY_MS
 
-    # Giới hạn trần tối đa không tiêu tốn quá 12% quỹ thời gian còn lại trong một nước
-    max_allowed = max(100, safe_remaining * 12 // 100)
+    # Giới hạn trần tối đa không tiêu tốn quá 8% quỹ thời gian còn lại trong một nước
+    max_allowed = max(80, safe_remaining * 8 // 100)
     budget = min(budget, max_allowed)
 
-    # Đảm bảo ngân sách sàn tối thiểu từ 60ms trở lên
-    return max(budget, 60)
+    # Đảm bảo ngân sách sàn tối thiểu từ 50ms trở lên
+    return max(budget, 50)
 
 
 class TimeManager:
