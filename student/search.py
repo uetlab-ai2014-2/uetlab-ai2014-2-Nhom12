@@ -4,7 +4,7 @@ from typing import Any, NamedTuple
 import chess
 
 from .time_manager import TimeManager
-# TODO (Thành viên B/tích hợp): import evaluate từ module evaluation.
+from .evaluation import evaluate
 
 # =========================================================================
 # 1. HẰNG SỐ VÀ CÁC CỜ CỦA TRANSPOSITION TABLE
@@ -14,7 +14,28 @@ MATE_SCORE = 30_000     # Điểm quy ước khi chiếu hết
 MATE_THRESHOLD = 29_000 # Ngưỡng nhận diện điểm chiếu hết
 DRAW_SCORE = 0
 MAX_DEPTH = 64
-# TODO (Thành viên C): khai báo PIECE_VALS, _MVV_LVA_SCORES và MAX_QSEARCH_DEPTH.
+PIECE_VALS = {
+    None: 0,
+    chess.PAWN: 100,
+    chess.KNIGHT: 320,
+    chess.BISHOP: 330,
+    chess.ROOK: 500,
+    chess.QUEEN: 1000,
+    chess.KING: 20000,
+}
+
+# Diem uu tien quan bi an va quan di an (MVV-LVA)
+_MVV_LVA_SCORES = {
+    None: 0,
+    chess.PAWN: 1,
+    chess.KNIGHT: 2,
+    chess.BISHOP: 3,
+    chess.ROOK: 4,
+    chess.QUEEN: 5,
+    chess.KING: 6,
+}
+
+MAX_QSEARCH_DEPTH = 8
 
 # 3 loại cận (bound) trong thuật toán Alpha-Beta
 TT_EXACT = 0  # Điểm chính xác (alpha < score < beta)
@@ -127,12 +148,13 @@ class TranspositionTable:
         existing = self._table.get(idx)
         if (
             existing is None
+            or existing.key == key
             or existing.age != age
             or depth >= existing.depth
         ):
-            # TODO (Thành viên D): bảo đảm entry cùng key được cập nhật dù depth thấp hơn.
-            self._table[idx] = TTEntry(key, depth, score, flag, best_move, age)
-
+            self._table[idx] = TTEntry(
+                key, depth, score, flag, best_move, age
+            )
     def clear(self) -> None:
         self._table.clear()
 
@@ -197,18 +219,31 @@ class Searcher:
         killers = self.killer_moves[ply] if ply < len(self.killer_moves) else [None, None]
         turn = board.turn
 
+        
         def score_move(move: chess.Move) -> int:
+            # Uu tien nuoc di tu Transposition Table
             if move == tt_move:
                 return 2_000_000
 
+            # Uu tien phong cap Hau
             if move.promotion == chess.QUEEN:
                 return 1_200_000
 
-            is_capture = board.is_capture(move)
-            if is_capture:
-                victim = board.piece_type_at(move.to_square)
+            # Danh gia cac nuoc bat quan
+            if board.is_capture(move):
+                victim = (
+                    chess.PAWN
+                    if board.is_en_passant(move)
+                    else board.piece_type_at(move.to_square)
+                )
+
                 attacker = board.piece_type_at(move.from_square)
-                mvv_lva = _MVV_LVA_SCORES[victim] * 10 - _MVV_LVA_SCORES[attacker]
+
+                mvv_lva = (
+                    _MVV_LVA_SCORES[victim] * 10
+                    - _MVV_LVA_SCORES[attacker]
+                )
+
                 see_val = see(board, move)
 
                 if see_val >= 0:
@@ -216,14 +251,18 @@ class Searcher:
                 else:
                     return 50_000 + see_val
 
+            # Killer Moves
             if move == killers[0]:
                 return 700_000
+
             if move == killers[1]:
                 return 650_000
 
+            # Cac nuoc phong cap khac
             if move.promotion is not None:
                 return 40_000
 
+            # History Heuristic
             key = (turn, move.from_square, move.to_square)
             return min(self.history.get(key, 0), 500_000)
 
@@ -258,26 +297,45 @@ class Searcher:
             return 0
 
         # Kiểm tra hòa lặp và 50 nước
+        if board.is_checkmate():
+            return -(MATE_SCORE - ply)
+
+        if board.is_stalemate():
+            return DRAW_SCORE
+
+        if board.is_insufficient_material():
+            return DRAW_SCORE
+
         if board.is_repetition(2) or board.halfmove_clock >= 100:
-            # TODO (Thành viên C): ưu tiên chiếu hết trước khi trả điểm hòa.
             return DRAW_SCORE
 
         in_check = board.is_check()
 
-        # Stand-pat: ước lượng giá trị thế cờ hiện tại nếu không đi nước nào
+       
+        # Stand-pat va Delta Pruning
         if not in_check:
             stand_pat = evaluate(board)
+
             if stand_pat >= beta:
                 return beta
-            # TODO (Thành viên C): kiểm tra Delta Pruning trước khi nâng alpha bằng stand_pat;
-            # điều kiện hiện tại phía dưới không thể đúng sau khi alpha đã được cập nhật.
+
+            # Kiem tra Delta Pruning truoc khi cap nhat alpha
+            # Khong cat tia neu co kha nang phong cap
+            has_promotion = any(
+                m.promotion is not None
+                for m in board.legal_moves
+            )
+
+            if (
+                qdepth > 0
+                and not has_promotion
+                and stand_pat + 1150 < alpha
+            ):
+                return alpha
+
             if stand_pat > alpha:
                 alpha = stand_pat
 
-            # Delta Pruning: nếu vị trí quá kém, dù ăn được Hậu (+1000)
-            # vẫn không thể vượt qua alpha thì cắt tỉa luôn nhánh này
-            if stand_pat + 1150 < alpha:
-                return alpha
 
         if qdepth >= MAX_QSEARCH_DEPTH and not in_check:
             return alpha
@@ -301,7 +359,11 @@ class Searcher:
         def q_order(m: chess.Move) -> int:
             if m.promotion == chess.QUEEN:
                 return 1000
-            v = board.piece_type_at(m.to_square)
+            v = (
+                chess.PAWN
+                if board.is_en_passant(m)
+                else board.piece_type_at(m.to_square)
+            )
             a = board.piece_type_at(m.from_square)
             return _MVV_LVA_SCORES[v] * 10 - _MVV_LVA_SCORES[a]
 
@@ -399,8 +461,10 @@ class Searcher:
                 if self._timeout:
                     return 0
 
-                if null_score >= beta:
-                    # TODO (Thành viên C): không cắt tỉa nếu null_score là điểm mate.
+                if (
+                    null_score >= beta
+                    and abs(null_score) < MATE_THRESHOLD
+                ):
                     return beta
 
         # Sinh và sắp xếp nước đi
