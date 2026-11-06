@@ -86,8 +86,8 @@ TODO
 ---
 
 ### 3. THÀNH VIÊN 3
-- **Họ và tên / MSSV:** TODO
-- **Tài khoản Git ghi nhận:** TODO
+- **Họ và tên / MSSV:** đỗ thành vương/25023079
+- **Tài khoản Git ghi nhận:** dovuong28122007-spec
 
 #### 3.1. Vai trò trong dự án
 - **Theo kế hoạch nhóm:** Chịu trách nhiệm trụ cột *Sắp xếp nước đi tối ưu (Move Ordering) & Triệt tiêu hiệu ứng chân trời*. Hiện thực các kỹ thuật nâng cao hiệu năng trong `student/search.py`: hàm sắp xếp nước đi `_order_moves`, thuật toán đánh giá đổi quân tĩnh 1-ply `see()`, Tìm kiếm tĩnh lặng `_quiescence()`, Delta Pruning, Null Move Pruning (NMP) và Late Move Reductions (LMR).
@@ -95,27 +95,32 @@ TODO
 #### 3.2. Công cụ AI sử dụng
 | Công cụ AI | Mục đích sử dụng |
 |---|---|
-|TODO|TODO|
-|TODO|TODO|
-|TODO|TODO|
+|open AI|Hỗ trợ phân tích nguyên lý và đề xuất cách triển khai SEE, Quiescence Search|
+|open AI|Hỗ trợ xây dựng điều kiện cắt tỉa trong Delta Pruning và Null Move Pruning|
+|open AI|Hỗ trợ rà soát logic các thuật toán tối ưu tìm kiếm và những trường hợp đặc biệt|
 #### 3.3. Nội dung AI hỗ trợ
 | Nhóm công việc | Nội dung AI hỗ trợ | Cách thành viên sử dụng kết quả |
-|---|---|---|
-|TODO|TODO|TODO|
-|TODO|TODO|TODO|
-|TODO|TODO|TODO|
+|Static Exchange Evaluation (SEE)|Gợi ý phương pháp đánh giá trao đổi quân dựa trên giá trị quân và khả năng bị ăn lại|Tham khảo và tích hợp phiên bản đánh giá trao đổi quân đơn giản vào see()|
+|Quiescence Search và Delta Pruning|Phân tích Horizon Effect, điều kiện stand-pat và thời điểm áp dụng Delta Pruning|Sử dụng mã gợi ý để bổ sung _quiescence() và điều chỉnh thứ tự kiểm tra điều kiện cắt tỉa|
+|Null Move Pruning và LMR|Giải thích điều kiện áp dụng cắt tỉa, giảm độ sâu và các trường hợp có thể gây sai lệch kết quả|Tham khảo logic để bổ sung NMP và rà soát các điều kiện tìm kiếm trong _negamax()|
 
 #### 3.4. Ví dụ tương tác AI tiêu biểu
-- **Vấn đề kỹ thuật:** *TODO*
-- **Yêu cầu đặt ra cho AI:** *TODO*
-- **Kết quả nhận được:** *TODO*
-- **Đánh giá và áp dụng:** *TODO*
+- **Vấn đề kỹ thuật:** Delta Pruning có thể không phát huy tác dụng nếu điều kiện cắt tỉa được kiểm tra sau khi cập nhật alpha bằng stand_pat
+- **Yêu cầu đặt ra cho AI:** Phân tích logic của Delta Pruning trong Quiescence Search và đề xuất cách sắp xếp lại điều kiện để tránh phép kiểm tra không hiệu quả
+- **Kết quả nhận được:** AI đề xuất kiểm tra điều kiện stand_pat + margin < alpha trước khi cập nhật alpha, đồng thời xem xét các trường hợp phong cấp
+- **Đánh giá và áp dụng:** Sử dụng đề xuất để chỉnh sửa phần Delta Pruning trong _quiescence(). Việc kiểm thử toàn bộ hệ thống chưa được xác nhận hoàn tất
 
 #### 3.5. Phân định phạm vi đóng góp
-- **Phần AI đóng góp:** TODO
-- **Phần thành viên tự thực hiện:** TODO
+- **Phần AI đóng góp:** Giải thích nguyên lý các thuật toán tối ưu tìm kiếm, đề xuất mã nguồn và hỗ trợ phân tích những điều kiện logic phức tạp
+- **Phần thành viên tự thực hiện:** Lựa chọn các đoạn mã phù hợp, đưa vào student/search.py, chỉnh sửa theo cấu trúc dự án và thực hiện các lệnh kiểm tra trong môi trường phát triển
 #### 3.6. Phương pháp kiểm chứng đã thực hiện
-TODO
+Sử dụng python -m py_compile và compileall để kiểm tra cú pháp mã nguồn
+
+Sử dụng pytest để kiểm tra khả năng tích hợp với các thành phần của dự án
+
+Phân tích thông báo lỗi và traceback để xác định các vấn đề liên quan đến Search và các module phụ thuộc
+
+Kết quả kiểm tra cú pháp đạt; các bài kiểm thử tích hợp vẫn còn trường hợp thất bại, chưa xác nhận toàn bộ thuật toán hoạt động chính xác
 
 ---
 
