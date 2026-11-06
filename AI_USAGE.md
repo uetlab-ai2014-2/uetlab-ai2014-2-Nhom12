@@ -51,37 +51,44 @@ Tài liệu này được lập nhằm mục đích minh bạch hóa toàn bộ 
 
 ---
 
+
 ### 2. THÀNH VIÊN 2
-- **Họ và tên / MSSV:** TODO
-- **Tài khoản Git ghi nhận:** TODO
+- **Họ và tên / MSSV:** *Lê Văn Việt / 25023069*
+- **Tài khoản Git ghi nhận:** *TODO*
 
 #### 2.1. Vai trò trong dự án
-- **Theo kế hoạch nhóm:** Chịu trách nhiệm trụ cột *Biểu diễn tri thức chuyên gia & Hàm lượng giá trạng thái (Heuristic Evaluation)*. Xây dựng toàn bộ module `student/evaluation.py`: hệ thống PeSTO Piece-Square Tables (trung cuộc và tàn cuộc), cơ chế Tapered Evaluation theo Game Phase (0..24), cấu trúc Tốt (tốt thông, tốt thông liên kết, tốt cô lập, tốt chồng), hoạt động quân (cặp tượng, xe cột mở/nửa mở/hàng 7, mã tiền đồn), an toàn Vua (pawn shield) và nhịp đi (tempo bonus).
+- **Theo kế hoạch nhóm:** Chịu trách nhiệm trụ cột *Biểu diễn tri thức chuyên gia & Hàm lượng giá trạng thái (Heuristic Evaluation)*. Xây dựng toàn bộ module `student/evaluation.py`: hệ thống PeSTO Piece-Square Tables (trung cuộc và tàn cuộc), cơ chế Tapered Evaluation theo Game Phase (0..24), cấu trúc Tốt (tốt thông, tốt thông liên kết, tốt cô lập, tốt chồng), hoạt động quân (cặp tượng, xe cột mở/nửa mở/hàng 7, mã tiền đồn), an toàn Vua (Pawn Shield) và nhịp đi (Tempo Bonus).
 
 #### 2.2. Công cụ AI sử dụng
 | Công cụ AI | Mục đích sử dụng |
 |---|---|
-|TODO|TODO|
-|TODO|TODO|
-|TODO|TODO|
+| **ChatGPT (OpenAI)** | Hỗ trợ đọc và đối chiếu yêu cầu thành viên B với module `evaluation.py`, rà soát mã nguồn và xác định các tiêu chí cần kiểm chứng. |
+| **ChatGPT (OpenAI)** | Hỗ trợ xây dựng bộ kiểm thử độc lập `test_evaluation.py` cho tính đối xứng Chess960, ưu thế vật chất, quy ước dấu Negamax và hiệu năng. |
+| **ChatGPT (OpenAI)** | Hướng dẫn khắc phục lỗi môi trường Python, cài đặt thư viện `python-chess`, thực thi kiểm thử và hoàn thiện tài liệu khai báo AI. |
+
 #### 2.3. Nội dung AI hỗ trợ
 | Nhóm công việc | Nội dung AI hỗ trợ | Cách thành viên sử dụng kết quả |
 |---|---|---|
-|TODO|TODO|TODO|
-|TODO|TODO|TODO|
-|TODO|TODO|TODO|
+| **Rà soát hàm lượng giá** | Đối chiếu các thành phần PeSTO PST, Tapered Evaluation, Game Phase, cấu trúc Tốt, hoạt động quân, an toàn Vua và Tempo Bonus với kế hoạch nhóm. | Tham khảo nhận xét để kiểm tra mức độ hoàn thiện của module và xác định các tiêu chí cần kiểm thử thực tế. |
+| **Thiết kế bộ kiểm thử** | Hỗ trợ xây dựng file kiểm thử riêng để kiểm tra 960 thế xuất phát Chess960, tính đối xứng, ưu thế vật chất, quy ước dấu Negamax và tốc độ đánh giá. | Sử dụng file test để chuẩn bị kiểm chứng module `evaluation.py`, chạy thử và theo dõi các lỗi phát sinh. |
+| **Phân tích lỗi và hỗ trợ tài liệu** | Giải thích các lỗi `ModuleNotFoundError`, hướng dẫn kiểm tra đường dẫn, tên module và môi trường Python; hỗ trợ trình bày báo cáo khai báo AI. | Đối chiếu hướng dẫn với môi trường VS Code, điều chỉnh cách thực thi và rà soát nội dung báo cáo trước khi nộp. |
 
 #### 2.4. Ví dụ tương tác AI tiêu biểu
-- **Vấn đề kỹ thuật:** *TODO*
-- **Yêu cầu đặt ra cho AI:** *TODO*
-- **Kết quả nhận được:** *TODO*
-- **Đánh giá và áp dụng:** *TODO*
+- **Vấn đề kỹ thuật:** Cần xác định module `evaluation.py` có đáp ứng đầy đủ các yêu cầu về hàm lượng giá Chess960, tính đối xứng, ưu thế vật chất và hiệu năng hay không.
+- **Yêu cầu đặt ra cho AI:** Đối chiếu file `evaluation.py` với kế hoạch phân công của nhóm, đánh giá mức độ hoàn thiện, tạo bộ kiểm thử độc lập và hướng dẫn thực thi trong VS Code.
+- **Kết quả nhận được:** ChatGPT hỗ trợ rà soát các chức năng của module, xây dựng file `test_evaluation.py`, hướng dẫn cài đặt thư viện `python-chess` và giải thích nguyên nhân lỗi khi chạy kiểm thử.
+- **Đánh giá và áp dụng:** Thành viên tham khảo các nhận xét, thử thực thi chương trình và xác định những vấn đề liên quan đến môi trường Python. Quá trình kiểm thử chưa hoàn tất do lỗi không tìm thấy module `test_evaluation`, vì vậy chưa thể xác nhận toàn bộ tiêu chí đều đạt yêu cầu.
 
 #### 2.5. Phân định phạm vi đóng góp
-- **Phần AI đóng góp:** TODO
-- **Phần thành viên tự thực hiện:** TODO
+- **Phần AI đóng góp:** Hỗ trợ phân tích yêu cầu kỹ thuật, rà soát module `evaluation.py`, xây dựng bộ kiểm thử độc lập, giải thích lỗi môi trường và hỗ trợ biên soạn tài liệu. Các nội dung AI hỗ trợ sinh hoặc chỉnh sửa mã nguồn trực tiếp trong những lần làm việc khác cần được khai báo bổ sung nếu có.
+- **Phần thành viên tự thực hiện:** Chịu trách nhiệm về module `student/evaluation.py`, lựa chọn và kiểm tra mã nguồn đưa vào repository, thực hiện kiểm thử, đánh giá kết quả và giải thích các thuật toán PeSTO, Tapered Evaluation, Game Phase, Bitboard, cấu trúc Tốt và quy ước dấu Negamax.
+
 #### 2.6. Phương pháp kiểm chứng đã thực hiện
-TODO
+- Đối chiếu cấu trúc và các thành phần của `evaluation.py` với yêu cầu kỹ thuật được phân công trong kế hoạch nhóm.
+- Kiểm tra cú pháp Python và rà soát các chức năng đánh giá vị trí, cấu trúc Tốt, hoạt động quân và an toàn Vua.
+- Thử thực thi chương trình và xử lý vấn đề thiếu thư viện `python-chess` trong môi trường Python.
+- Thử chạy bộ kiểm thử độc lập bằng `unittest`, phát hiện lỗi không tìm thấy module `test_evaluation`.
+- **Chưa xác nhận:** Kết quả kiểm thử toàn bộ 960 thế Chess960, ưu thế vật chất tối thiểu 800 centipawn và tốc độ tối thiểu 40.000 evaluations/giây. Các kết quả này cần được bổ sung sau khi kiểm thử thành công.
 
 ---
 
