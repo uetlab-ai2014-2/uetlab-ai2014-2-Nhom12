@@ -182,7 +182,7 @@ Kết quả kiểm tra cú pháp đạt; các bài kiểm thử tích hợp vẫ
 ## PHẦN II. KHAI BÁO SỬ DỤNG AI CẤP NHÓM
 
 ### 2.1. Nguyên tắc sử dụng AI của nhóm
-Toàn thể 4 thành viên Nhóm 4 thống nhất và tuân thủ nghiêm ngặt các nguyên tắc sau:
+Toàn thể 4 thành viên Nhóm 12 thống nhất và tuân thủ nghiêm ngặt các nguyên tắc sau:
 1. **AI là công cụ trợ lực, không thay thế tư duy học thuật:** Công cụ AI chỉ được sử dụng để hỗ trợ tra cứu tài liệu, giải thích lý thuyết, rà soát lỗi cú pháp và gợi ý hướng tối ưu. Toàn bộ quyết định kỹ thuật và mã nguồn đưa vào dự án đều do các thành viên tự đọc hiểu, đánh giá và kiểm chứng.
 2. **Tuân thủ tuyệt đối quy định cấm của môn học:** Không sử dụng bất kỳ thư viện học máy (Machine Learning / Deep Learning), không sử dụng mô hình huấn luyện sẵn, không gọi API bên ngoài, không sử dụng sách khai cuộc hoặc cơ sở dữ liệu cờ tàn.
 3. **Trách nhiệm giải trình cá nhân:** Mọi dòng mã nguồn trong thư mục `student/` đều có thành viên cụ thể chịu trách nhiệm giải thích chi tiết cơ chế hoạt động khi được giảng viên vấn đáp trực tiếp.
@@ -203,32 +203,3 @@ Nhóm 12 cam kết toàn bộ nội dung khai báo trong tài liệu này là ho
 
 ---
 
-## PHẦN IV. THÔNG TIN CẦN THÀNH VIÊN TỰ XÁC NHẬN VÀ BỔ SUNG TRƯỚC KHI NỘP BÀI
-
-Để đảm bảo tính chính xác tuyệt đối trước khi gắn thẻ nộp bài `submission-final`, từng thành viên cần mở tệp này và xác nhận các mục sau:
-
-### 1. Dành cho Thành viên 1:
-- [ ] Điền chính xác Mã số sinh viên (MSSV) và Họ tên vào mục 1.
-- [ ] Xác nhận tài khoản Git cá nhân dùng để commit phần Search Core.
-- [ ] Bổ sung các công cụ AI cá nhân khác (nếu có dùng ngoài Google Antigravity).
-- [ ] Tự kiểm tra lại khả năng giải thích lưu đồ thuật toán PVS và Aspiration Windows.
-
-### 2. Dành cho Thành viên 2:
-- [ ] Điền chính xác Mã số sinh viên (MSSV) và Họ tên vào mục 2.
-- [ ] Xác nhận tài khoản Git cá nhân dùng để commit phần Evaluation.
-- [ ] Xác nhận danh sách các bảng PeSTO và công thức Game Phase do mình quản lý.
-- [ ] Tự kiểm tra lại khả năng giải thích cách Bitboard phát hiện Tốt thông và Cột mở.
-
-### 3. Dành cho Thành viên 3:
-- [ ] Điền chính xác Mã số sinh viên (MSSV) và Họ tên vào mục 3.
-- [ ] Xác nhận tài khoản Git cá nhân dùng để commit phần Move Ordering & Quiescence.
-- [ ] Xác nhận công thức tính toán của hàm `see()` và ngưỡng cắt tỉa Delta Pruning.
-- [ ] Tự kiểm tra lại khả năng giải thích cách giải quyết Hiệu ứng chân trời (Horizon Effect).
-
-### 4. Dành cho Thành viên 4:
-- [x] Điền chính xác Mã số sinh viên (MSSV) và Họ tên vào mục 4.
-- [x] Rà soát tệp `team.json` đảm bảo đầy đủ thông tin của cả 4 thành viên.
-- [ ] Kiểm tra dung lượng thư mục `student/` $< 1$ MiB trước khi gắn tag `submission-final`.
-- [ ] Tự kiểm tra lại khả năng giải thích cơ chế bù độ trễ thời gian 500ms của ChessLab.
-
----

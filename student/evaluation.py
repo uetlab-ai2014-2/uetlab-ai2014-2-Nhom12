@@ -30,23 +30,23 @@ from __future__ import annotations
 import chess
 
 # ---------------------------------------------------------------------------
-# Giá trị vật chất cơ sở (PeSTO standard values)
+# Giá trị vật chất cơ sở (PeSTO standard values) 
 # ---------------------------------------------------------------------------
 MG_PIECE_VALUES: dict[chess.PieceType, int] = {
-    chess.PAWN:   82,
-    chess.KNIGHT: 337,
-    chess.BISHOP: 365,
-    chess.ROOK:   477,
-    chess.QUEEN:  1025,
+    chess.PAWN:   81,  
+    chess.KNIGHT: 324,  
+    chess.BISHOP: 360,  
+    chess.ROOK:   486,  
+    chess.QUEEN:  1024,
     chess.KING:   0,
 }
 
 EG_PIECE_VALUES: dict[chess.PieceType, int] = {
-    chess.PAWN:   94,
-    chess.KNIGHT: 281,
-    chess.BISHOP: 297,
-    chess.ROOK:   512,
-    chess.QUEEN:  936,
+    chess.PAWN:   99,   
+    chess.KNIGHT: 288, 
+    chess.BISHOP: 306, 
+    chess.ROOK:   512, 
+    chess.QUEEN:  972, 
     chess.KING:   0,
 }
 
@@ -237,7 +237,8 @@ PASSED_PAWN_BONUS_EG = [0, 10, 20, 40, 70, 120, 200, 0]
 # ===========================================================================
 
 try:  # Python >= 3.10: popcount viết bằng C
-    _popcount = int.bit_count
+    def _popcount(bb: int) -> int:
+        return bb.bit_count()
 except AttributeError:  # pragma: no cover - fallback cho Python cũ
     def _popcount(bb: int) -> int:
         return bin(bb).count("1")
@@ -321,26 +322,26 @@ _KS_FILES, _KS_NEAR_W, _KS_FAR_W, _KS_NEAR_B, _KS_FAR_B = _build_king_zones()
 # ---------------------------------------------------------------------------
 # Hằng số tinh chỉnh (đã đóng gói: _pk(mg, eg)). Chỉnh ở đây khi tuning.
 # ---------------------------------------------------------------------------
-TEMPO_BONUS = 10
+TEMPO_BONUS = 9
 
-_BISHOP_PAIR = _pk(35, 50)
-_ROOK_OPEN_FILE = _pk(25, 20)
-_ROOK_SEMI_OPEN = _pk(15, 10)
-_ROOK_7TH = _pk(25, 35)
-_DOUBLED_PAWN = _pk(15, 20)       # trừ cho mỗi Tốt nằm trong cột có >= 2 Tốt
-_ISOLATED_PAWN = _pk(15, 20)
-_CONNECTED_PASSED = _pk(20, 40)   # mỗi cặp cột kề nhau cùng có Tốt thông
-_KNIGHT_OUTPOST = _pk(20, 10)
+_BISHOP_PAIR = _pk(36, 54)
+_ROOK_OPEN_FILE = _pk(27, 21)
+_ROOK_SEMI_OPEN = _pk(15, 12)
+_ROOK_7TH = _pk(27, 36)    
+_DOUBLED_PAWN = _pk(18, 24)       
+_ISOLATED_PAWN = _pk(18, 24)
+_CONNECTED_PASSED = _pk(24, 48)  
+_KNIGHT_OUTPOST = _pk(24, 12) 
 
 # King Safety (chỉ trung cuộc => eg = 0)
 KS_MIN_PHASE = 10                 # chỉ tính khi phase > KS_MIN_PHASE
-_KS_SHIELD_NEAR = 8               # Tốt ngay trước Vua (3 ô: f-1, f, f+1)
-_KS_SHIELD_FAR = 4                # Tốt cách Vua 2 hàng
-_KS_OPEN_FILE = 20                # cột gần Vua hoàn toàn không có Tốt
-_KS_HALF_OPEN_FILE = 10           # cột gần Vua không có Tốt nhà, chỉ có Tốt địch
+_KS_SHIELD_NEAR = 9   
+_KS_SHIELD_FAR = 4     
+_KS_OPEN_FILE = 24            
+_KS_HALF_OPEN_FILE = 12           
 
 # Quyền nhập thành (chỉ trung cuộc): mỗi quyền còn lại = một "tuỳ chọn an toàn".
-_CASTLE_RIGHT = _pk(10, 0)
+_CASTLE_RIGHT = _pk(9, 0)        
 
 
 # ===========================================================================
@@ -384,14 +385,15 @@ def _spread_files(bb: int) -> int:
 
 def evaluate(board: chess.Board) -> int:
     """
-    Đánh giá tĩnh vị trí theo quy ước Negamax.
+    Đánh giá tĩnh vị trí bàn cờ (Static Evaluation) theo quy ước Negamax.
+    Tích hợp Tapered Evaluation (PeSTO) nội suy trung cuộc (MG) và tàn cuộc (EG).
 
     Args:
-        board: thế cờ (cờ truyền thống hoặc Chess960). Giả định mỗi bên có
-            đúng một Vua; hàm không kiểm tra chiếu hết/hoà cờ.
+        board: Trạng thái bàn cờ hiện tại (đối tượng chess.Board hỗ trợ Chess960).
+            Giả định mỗi bên có đúng một Vua; không tự kiểm tra chiếu hết/hoà cờ.
 
     Returns:
-        Điểm (centipawn) theo góc nhìn của bên đang đến lượt ``board.turn``;
+        int: Điểm centipawn theo góc nhìn của bên đang đến lượt board.turn;
         dương = có lợi cho bên đang đi. Thế xuất phát của mọi vị trí Chess960
         cho đúng ``+TEMPO_BONUS``.
     """
@@ -562,7 +564,7 @@ if __name__ == "__main__":
             b = chess.Board.from_chess960_pos(n)
             b.turn = turn
             assert evaluate(b) == TEMPO_BONUS, f"Chess960 #{n} mất đối xứng"
-    print("OK: 960/960 thế xuất phát đều = +%d" % TEMPO_BONUS)
+    print("OK: 960/960 start positions == +%d" % TEMPO_BONUS)
 
     # (2) Đối xứng Negamax trên các thế ngẫu nhiên: evaluate(b) == evaluate(b.mirror()).
     rng = random.Random(0)
@@ -577,7 +579,7 @@ if __name__ == "__main__":
             if rng.random() < 0.2:
                 sample.append(b.copy())
     assert all(evaluate(p) == evaluate(p.mirror()) for p in sample)
-    print("OK: mirror-symmetry trên %d thế ngẫu nhiên" % len(sample))
+    print("OK: mirror-symmetry on %d random positions" % len(sample))
 
     # (3) Tốc độ.
     t0 = time.perf_counter()
@@ -585,4 +587,4 @@ if __name__ == "__main__":
         for p in sample:
             evaluate(p)
     nps = 5 * len(sample) / (time.perf_counter() - t0)
-    print("NPS: %d evaluations/giây" % nps)
+    print("NPS: %d evaluations/sec" % nps)

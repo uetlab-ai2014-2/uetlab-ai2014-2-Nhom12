@@ -1,27 +1,11 @@
 {
   "protocol_version": "1.0",
   "team_id": "nhom-12",
-  "display_name": "Ai đọc được dòng này là gei",
+  "display_name": "Ai đọc được dòng này là gei =))) - Nhóm 12",
   "members": [
-    {
-      "name": "Nông Văn Bách",
-      "student_id": "25022782",
-      "email": "25022782@vnu.edu.vn"
-    },
-    {
-      "name": "Vũ Hoàng Long",
-      "student_id": "25022922",
-      "email": "25022922@vnu.edu.vn"
-    },
-    {
-      "name": "Lê Văn Việt",
-      "student_id": "25023069",
-      "email": "25023069@vnu.edu.vn"
-    },
-    {
-      "name": "Đỗ Thành Vương",
-      "student_id": "25023079",
-      "email": "25023079@vnu.edu.vn"
-    }
+    "25022782 - Nông Văn Bách",
+    "25022922 - Vũ Hoàng Long",
+    "25023069 - Lê Văn Việt",
+    "25023079 - Đỗ Thành Vương"
   ]
 }
