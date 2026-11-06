@@ -18,8 +18,8 @@ Tài liệu này được lập nhằm mục đích minh bạch hóa toàn bộ 
 ---
 
 ### 1. THÀNH VIÊN 1
-- **Họ và tên / MSSV:** TODO
-- **Tài khoản Git ghi nhận:** TODO
+- **Họ và tên / MSSV:** *Vũ Hoàng Long / 25022922*
+- **Tài khoản Git ghi nhận:** *long8807*
 
 #### 1.1. Vai trò trong dự án
 - **Theo kế hoạch nhóm:** Chịu trách nhiệm trụ cột *Duyệt không gian trạng thái trò chơi đối kháng & Cắt tỉa toán học*. Phụ trách khối lõi thuật toán trong `student/search.py`: Negamax, Alpha-Beta Pruning, Đào sâu lặp (Iterative Deepening Search - IDS), Cửa sổ kỳ vọng (Aspiration Windows), Principal Variation Search (PVS), chuẩn hóa điểm chiếu hết theo độ sâu, an toàn bàn cờ `board.push()` / `board.pop()`.
@@ -27,27 +27,27 @@ Tài liệu này được lập nhằm mục đích minh bạch hóa toàn bộ 
 #### 1.2. Công cụ AI sử dụng
 | Công cụ AI | Mục đích sử dụng |
 |---|---|
-|TODO|TODO|
-|TODO|TODO|
-|TODO|TODO|
+| **Gemini** | Giải thích nguyên lý các thuật toán tìm kiếm; gợi ý cách kiểm tra thao tác `board.push()` / `board.pop()` và cách sử dụng Transposition Table; rà soát điều kiện cắt tỉa trong Negamax và gợi ý lựa chọn độ sâu cho LMR. |
 #### 1.3. Nội dung AI hỗ trợ
 | Nhóm công việc | Nội dung AI hỗ trợ | Cách thành viên sử dụng kết quả |
 |---|---|---|
-|TODO|TODO|TODO|
-|TODO|TODO|TODO|
-|TODO|TODO|TODO|
+| **Giải thích thuật toán tìm kiếm** | Giải thích cách Negamax kết hợp Alpha-Beta, cách nhận diện trạng thái thắng/thua/hòa và cách các thuật toán tìm kiếm nước đi trong giới hạn thời gian. | Tự đọc, chọn lọc và áp dụng phần phù hợp khi hiện thực, sau đó chạy thử để kiểm tra thuật toán và hành vi của bot. |
+| **Rà soát trạng thái bàn cờ và cắt tỉa** | Gợi ý kiểm tra việc hoàn tác trạng thái sau `push()` bằng `pop()` và rà soát điều kiện cắt tỉa trong Negamax; trao đổi về việc dùng Transposition Table để tra cứu kết quả/nước đi đã lưu. | Tự đối chiếu với luồng tìm kiếm trong mã nguồn và kiểm tra lại các hàm sau khi chỉnh sửa. |
+| **Tham khảo tham số LMR** | Hướng dẫn các yếu tố cần cân nhắc khi chọn độ sâu giảm cho Late Move Reductions (LMR). | Tự đánh giá và thử nghiệm trên bot; không áp dụng máy móc gợi ý của AI. |
 
 #### 1.4. Ví dụ tương tác AI tiêu biểu
-- **Vấn đề kỹ thuật:** *TODO*
-- **Yêu cầu đặt ra cho AI:** *TODO*
-- **Kết quả nhận được:** *TODO*
-- **Đánh giá và áp dụng:** *TODO*
+- **Vấn đề kỹ thuật:** Cách dùng Transposition Table để tham khảo nước đi tốt nhất, điều kiện cắt tỉa trong Negamax và độ sâu phù hợp cho LMR.
+- **Yêu cầu đặt ra cho AI:** Giải thích cách kiểm tra nước đi tốt nhất trong Transposition Table, rà soát điều kiện cắt tỉa trong Negamax và hướng dẫn các yếu tố để lựa chọn độ sâu giảm cho LMR.
+- **Kết quả nhận được:** Gemini giải thích cách tham khảo thông tin đã lưu trong Transposition Table, các điều kiện cắt tỉa cần xem xét và cách cân nhắc độ sâu giảm cho LMR.
+- **Đánh giá và áp dụng:** Thành viên tự đối chiếu các gợi ý với mã nguồn, thử chạy các hàm để phát hiện lỗi và quan sát lựa chọn nước đi, gồm việc ưu tiên ăn quân có giá trị cao hoặc tìm cơ hội chiếu hết sớm. Các gợi ý được dùng để tham khảo, không thay thế việc tự quyết định và kiểm chứng.
 
 #### 1.5. Phân định phạm vi đóng góp
-- **Phần AI đóng góp:** TODO
-- **Phần thành viên tự thực hiện:** TODO
+- **Phần AI đóng góp:** Giải thích thuật toán và gợi ý rà soát Negamax, Transposition Table, thao tác `push()` / `pop()` và tham số LMR; không trực tiếp quyết định hay xác nhận tính đúng đắn của mã nguồn.
+- **Phần thành viên tự thực hiện:** Tự hiện thực và điều chỉnh Negamax, kiểm tra trạng thái kết thúc ván, tìm kiếm nước đi trong giới hạn thời gian và các kỹ thuật tìm kiếm thuộc phần được phân công; tự kiểm tra mã nguồn và quyết định có áp dụng từng gợi ý hay không.
 #### 1.6. Phương pháp kiểm chứng đã thực hiện
-TODO
+- Tự chạy thử các hàm tìm kiếm để kiểm tra lỗi khi thực thi và kiểm tra việc xử lý các trạng thái thắng, thua, hòa.
+- Quan sát lựa chọn nước đi trong các tình huống thử, kiểm tra bot có cân nhắc ăn quân giá trị cao và cơ hội chiếu hết sớm hay không.
+- Đối chiếu luồng cập nhật/hoàn tác trạng thái bàn cờ và các điều kiện cắt tỉa trong mã nguồn sau khi nhận gợi ý.
 
 ---
 
@@ -157,7 +157,7 @@ TODO
   - Xây dựng công thức compute_budget_ms() và các phương thức quản lý deadline.
   - Hiện thực lớp `StudentBot` trong `student/bot.py`, bao gồm cơ chế kiểm tra nước đi hợp lệ và fallback khi xảy ra ngoại lệ.
   - Xây dựng lớp `TranspositionTable` và các hàm chuẩn hóa điểm chiếu hết.
-  - Tự kiểm thử, sửa lỗi, tích hợp mã nguồn của các thành viên và chịu trách nhiệm giải trình các nội dung kỹ thuật được phân công.
+  - Tự kiểm thử, sửa lỗi, tích hợp mã nguồn của các thành viên và chịu trách nhiệm giải trình các nội dung kỹ thuật được phân công. 
 
 #### 4.6. Phương pháp kiểm chứng đã thực hiện
 - Kiểm thử quản lý thời gian: Thử nghiệm bot với các mức thời gian khác nhau, kiểm tra ngân sách tìm kiếm và khả năng dừng khi đạt deadline.
@@ -179,7 +179,7 @@ Toàn thể 4 thành viên Nhóm 4 thống nhất và tuân thủ nghiêm ngặt
 
 | Thành viên | Trụ cột phân công | Công cụ AI xác nhận | Mục đích chính |
 |---|---|---|---|
-| **TODO** | TODO | TODO | TODO |
+| **Vũ Hoàng Long** | Duyệt không gian trạng thái và cắt tỉa toán học | Gemini | Giải thích thuật toán tìm kiếm; gợi ý rà soát Negamax, Transposition Table, thao tác `push()` / `pop()` và tham số LMR. Thành viên tự hiện thực, thử nghiệm và quyết định áp dụng. |
 | **TODO** | TODO | TODO | TODO |
 | **TODO** | TODO | TODO | TODO |
 | **Nông Văn Bách** | Quản trị trạng thái, quản lý thời gian & tích hợp hệ thống | Google Antigravity (Gemini / Claude) | Hỗ trợ phân tích lỗi kỹ thuật zobrist_hash, giải thích nguyên lý quản lý ngân sách thời gian tìm kiếm, tham khảo hướng xử lý ngoại lệ và rà soát tài liệu. Thành viên tự nghiên cứu, lựa chọn giải pháp, lập trình, tích hợp mã nguồn và hoàn thiện hồ sơ dự án|
