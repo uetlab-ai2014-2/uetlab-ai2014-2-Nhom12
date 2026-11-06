@@ -193,7 +193,7 @@ Toàn thể 4 thành viên Nhóm 4 thống nhất và tuân thủ nghiêm ngặt
 |---|---|---|---|
 | **Vũ Hoàng Long** | Duyệt không gian trạng thái và cắt tỉa toán học | Gemini | Giải thích thuật toán tìm kiếm; gợi ý rà soát Negamax, Transposition Table, thao tác `push()` / `pop()` và tham số LMR. Thành viên tự hiện thực, thử nghiệm và quyết định áp dụng. |
 | **TODO** | TODO | TODO | TODO |
-| **TODO** | TODO | TODO | TODO |
+| **đỗ thành vương** | Tối ưu hóa thuật toán tìm kiếm: Move Ordering, SEE, Quiescence Search, Delta Pruning, NMP và LMR | OpenAI | Hỗ trợ phân tích và đề xuất mã nguồn cho các thuật toán SEE, Quiescence Search, Delta Pruning, NMP và LMR; hỗ trợ rà soát các điều kiện cắt tỉa và logic tìm kiếm trong `student/search.py` |
 | **Nông Văn Bách** | Quản trị trạng thái, quản lý thời gian & tích hợp hệ thống | Google Antigravity (Gemini / Claude) | Hỗ trợ phân tích lỗi kỹ thuật zobrist_hash, giải thích nguyên lý quản lý ngân sách thời gian tìm kiếm, tham khảo hướng xử lý ngoại lệ và rà soát tài liệu. Thành viên tự nghiên cứu, lựa chọn giải pháp, lập trình, tích hợp mã nguồn và hoàn thiện hồ sơ dự án|
 
 ### 2.3. Cam kết học thuật của nhóm
