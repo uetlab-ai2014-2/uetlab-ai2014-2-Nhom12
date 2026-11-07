@@ -192,10 +192,8 @@ Toàn thể 4 thành viên Nhóm 12 thống nhất và tuân thủ nghiêm ngặ
 | Thành viên | Trụ cột phân công | Công cụ AI xác nhận | Mục đích chính |
 |---|---|---|---|
 | **Vũ Hoàng Long** | Duyệt không gian trạng thái và cắt tỉa toán học | Gemini | Giải thích thuật toán tìm kiếm; gợi ý rà soát Negamax, Transposition Table, thao tác `push()` / `pop()` và tham số LMR. Thành viên tự hiện thực, thử nghiệm và quyết định áp dụng. |
-
-| **Lê Văn Việt** | Biểu diễn tri thức chuyên gia và hàm lượng giá trạng thái (Heuristic Evaluation) trong `student/evaluation.py`,Hỗ trợ rà soát PeSTO PST, Tapered Evaluation, Game Phase, cấu trúc Tốt, hoạt động quân, an toàn Vua và Tempo Bonus; hỗ trợ xây dựng bộ kiểm thử Chess960, giải thích lỗi môi trường Python và chuẩn hóa tài liệu. Thành viên chịu trách nhiệm lựa chọn, kiểm tra mã nguồn và xác minh kết quả; các tiêu chí hiệu năng và kiểm thử toàn diện chưa được xác nhận. |
-
-| **đỗ thành vương** | Tối ưu hóa thuật toán tìm kiếm: Move Ordering, SEE, Quiescence Search, Delta Pruning, NMP và LMR | OpenAI | Hỗ trợ phân tích và đề xuất mã nguồn cho các thuật toán SEE, Quiescence Search, Delta Pruning, NMP và LMR; hỗ trợ rà soát các điều kiện cắt tỉa và logic tìm kiếm trong `student/search.py` |
+| **Lê Văn Việt** | Biểu diễn tri thức chuyên gia và hàm lượng giá trạng thái trong `student/evaluation.py` | Gemini / ChatGPT | Hỗ trợ rà soát PeSTO PST, Tapered Evaluation, Game Phase, cấu trúc Tốt, hoạt động quân, an toàn Vua và Tempo Bonus; hỗ trợ chuẩn hóa tài liệu. Thành viên tự lựa chọn, kiểm tra mã nguồn và xác minh kết quả. |
+| **Đỗ Thành Vương** | Tối ưu hóa thuật toán tìm kiếm: Move Ordering, SEE, Quiescence Search, Delta Pruning, NMP và LMR | OpenAI | Hỗ trợ phân tích và đề xuất mã nguồn cho các thuật toán SEE, Quiescence Search, Delta Pruning, NMP và LMR; hỗ trợ rà soát các điều kiện cắt tỉa và logic tìm kiếm trong `student/search.py` |
 | **Nông Văn Bách** | Quản trị trạng thái, quản lý thời gian & tích hợp hệ thống | Google Antigravity (Gemini / Claude) | Hỗ trợ phân tích lỗi kỹ thuật zobrist_hash, giải thích nguyên lý quản lý ngân sách thời gian tìm kiếm, tham khảo hướng xử lý ngoại lệ và rà soát tài liệu. Thành viên tự nghiên cứu, lựa chọn giải pháp, lập trình, tích hợp mã nguồn và hoàn thiện hồ sơ dự án|
 
 ### 2.3. Cam kết học thuật của nhóm
