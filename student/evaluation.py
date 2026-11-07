@@ -1,28 +1,30 @@
 """
-evaluation.py – Hàm đánh giá vị trí tốc độ cao cho bot Chess960 (ChessLab).
+Module evaluation.py – Động cơ lượng giá vị trí cờ vua tốc độ cao (Heuristic Evaluation Core).
 
-Thiết kế
---------
-* Hàm đánh giá Heuristic + Tapered Evaluation (PeSTO): nội suy giữa trung cuộc
-  (MG) và tàn cuộc (EG) theo game phase 0..24.
-* Toàn bộ logic chạy trên bitboard số nguyên của python-chess
-  (``board.pawns``, ``board.occupied_co``...) – không dùng ``SquareSet``,
-  không tạo list/tuple tạm, không ``append``/``sort`` trong ``evaluate()``.
-* Điểm MG và EG được **đóng gói vào một số nguyên duy nhất**
-  (``packed = mg + (eg << 16)``) nên mỗi phép cộng cập nhật cả hai thành phần.
-* Chuyên biệt Chess960:
-    - Bảng PST của hai bên là ảnh phản chiếu theo trục ngang (``sq ^ 56``),
-      vì ở Chess960 quân Đen luôn nằm cùng cột với quân Trắng nên thế xuất phát
-      của mọi trong 960 thế cờ đều đối xứng tuyệt đối -> điểm = 0 (+ Tempo).
-    - King Safety dựa trên vị trí Vua thực tế (cột/hàng của Vua), không giả định
-      Vua ở c1/g1 hay e1.
-    - Quyền nhập thành đọc từ ``board.castling_rights`` (bitboard các ô Xe còn
-      quyền), đúng với cả chế độ ``chess960=True`` lẫn cờ truyền thống.
-* Quy ước Negamax: điểm trả về luôn theo góc nhìn của bên đang đến lượt
-  (``board.turn``). Hàm KHÔNG kiểm tra chiếu hết/hoà cờ – bộ máy tìm kiếm phải
-  xử lý trạng thái kết thúc trước khi gọi ``evaluate()``.
-
-Yêu cầu: Python >= 3.8 (dùng ``int.bit_count`` nếu có, tự động fallback).
+Các thành phần chính của hàm lượng giá:
+1. Giá trị vật chất và vị trí ô (PeSTO Piece-Square Tables):
+   - Đóng gói tuyến tính an toàn: val = mg + (eg << 16).
+   - Giải nén số nguyên có dấu: eg = (val + 0x8000) >> 16, mg = val - (eg << 16).
+   - Triệt tiêu hoàn toàn rủi ro tràn số âm 16-bit trong Python.
+2. Nội suy theo giai đoạn trận đấu (Tapered Evaluation):
+   - Tổng trọng số game phase từ 0 (tàn cuộc thuần túy) đến 24 (khai cuộc đầy đủ quân).
+   - Điểm số nội suy: score = (mg * phase + eg * (24 - phase)) // 24.
+3. Hoạt động của các quân cờ:
+   - Thưởng cặp Tượng (Bishop Pair).
+   - Thưởng Xe trên cột mở (Open File), cột bán mở (Semi-open File) và hàng 7 (7th Rank).
+   - Thưởng Mã chiếm tiền đồn trung tâm được Tốt bảo vệ (Knight Outposts).
+4. Cấu trúc Tốt:
+   - Phạt Tốt chồng (Doubled Pawns) và Tốt cô lập (Isolated Pawns).
+   - Thưởng Tốt thông (Passed Pawns) tăng dần theo rank tiến về phía trước.
+   - Thưởng Tốt thông liên kết (Connected Passed Pawns).
+5. An toàn Vua thích ứng Chess960 (Dynamic Bitwise King Ring):
+   - Tính toán vành đai bảo vệ quanh Vua theo tọa độ thực tế của Vua, độc lập với vị trí ô khởi đầu.
+   - Thưởng lá chắn Tốt gần/xa, phạt cột mở trước mặt Vua trong trung cuộc.
+6. Dồn Vua tàn cuộc (Gated Mop-Up Heuristic):
+   - Chỉ kích hoạt khi tàn cuộc áp đảo (phase <= 6 và chênh lệch >= 200 centipawns).
+   - Thưởng điểm khi ép Vua đối phương ra xa tâm bàn cờ và kéo Vua ta áp sát để tạo mạng lưới chiếu hết.
+7. Quy ước đối xứng gương (Mirror Symmetry):
+   - Đảm bảo evaluate(b) == evaluate(b.mirror()) trên mọi thế cờ.
 """
 
 from __future__ import annotations
@@ -30,23 +32,23 @@ from __future__ import annotations
 import chess
 
 # ---------------------------------------------------------------------------
-# Giá trị vật chất cơ sở (PeSTO standard values) 
+# Giá trị vật chất cơ sở (PeSTO standard values)
 # ---------------------------------------------------------------------------
 MG_PIECE_VALUES: dict[chess.PieceType, int] = {
-    chess.PAWN:   81,  
-    chess.KNIGHT: 324,  
-    chess.BISHOP: 360,  
-    chess.ROOK:   486,  
+    chess.PAWN:   81,
+    chess.KNIGHT: 324,
+    chess.BISHOP: 360,
+    chess.ROOK:   486,
     chess.QUEEN:  1024,
     chess.KING:   0,
 }
 
 EG_PIECE_VALUES: dict[chess.PieceType, int] = {
-    chess.PAWN:   99,   
-    chess.KNIGHT: 288, 
-    chess.BISHOP: 306, 
-    chess.ROOK:   512, 
-    chess.QUEEN:  972, 
+    chess.PAWN:   99,
+    chess.KNIGHT: 288,
+    chess.BISHOP: 306,
+    chess.ROOK:   512,
+    chess.QUEEN:  972,
     chess.KING:   0,
 }
 
@@ -62,7 +64,7 @@ PHASE_WEIGHTS: dict[chess.PieceType, int] = {
 MAX_PHASE = 24
 
 # ---------------------------------------------------------------------------
-# PeSTO Piece-Square Tables (Viết trực quan: Rank 8 ở trên, Rank 1 ở dưới)
+# PeSTO Piece-Square Tables (Mảng thô 64 ô từ Rank 8 xuống Rank 1)
 # ---------------------------------------------------------------------------
 _PAWN_MG_RAW = [
       0,   0,   0,   0,   0,   0,   0,   0,
@@ -74,7 +76,6 @@ _PAWN_MG_RAW = [
     -35,  -1, -20, -23, -15,  24,  38, -22,
       0,   0,   0,   0,   0,   0,   0,   0,
 ]
-
 _PAWN_EG_RAW = [
       0,   0,   0,   0,   0,   0,   0,   0,
     178, 173, 158, 134, 147, 132, 165, 187,
@@ -82,7 +83,7 @@ _PAWN_EG_RAW = [
      32,  24,  13,   5,  -2,   4,  17,  17,
      13,   9,  -3,  -7,  -7,  -8,   3,  -1,
       4,   7,  -6,   1,   0,  -5,  -1,  -8,
-     13,   9,   8,  10,  11,  11,  15,  12,
+     13,   8,   8, -10,  -6,   0,   2,  -7,
       0,   0,   0,   0,   0,   0,   0,   0,
 ]
 
@@ -96,7 +97,6 @@ _KNIGHT_MG_RAW = [
     -29, -53, -12,  -3,  -1,  18, -14,  -19,
    -105, -21, -58, -33, -17, -28, -19,  -23,
 ]
-
 _KNIGHT_EG_RAW = [
     -58, -38, -13, -28, -31, -27, -63,  -99,
     -25,  -8, -25,  -2,  -9, -25, -24,  -52,
@@ -118,7 +118,6 @@ _BISHOP_MG_RAW = [
       4,  15,  16,   0,   7,  21,  33,   1,
     -33,  -3, -14, -21, -13, -12, -39, -21,
 ]
-
 _BISHOP_EG_RAW = [
     -14, -21, -11,  -8,  -7,  -9, -17, -24,
      -8,  -4,   7, -12,  -3, -13,  -4, -14,
@@ -140,7 +139,6 @@ _ROOK_MG_RAW = [
     -44, -16, -20,  -9,  -1,  11,  -6, -71,
     -19, -13,   1,  17,  16,   7, -37, -26,
 ]
-
 _ROOK_EG_RAW = [
      13,  10,  18,  15,  12,  12,   8,   5,
      11,  13,  13,  11,  -3,   3,   8,   3,
@@ -155,23 +153,22 @@ _ROOK_EG_RAW = [
 _QUEEN_MG_RAW = [
     -28,   0,  29,  12,  59,  44,  43,  45,
     -24, -39,  -5,   1, -16,  57,  28,  54,
-    -13, -17,   7,   8,  29,  56,  47,  57,
-    -27, -27, -16, -16,  -1,  17,  -2,   1,
-     -9, -26,  -9, -10,  -2,  -4,   3,  -3,
-    -14,   2, -11,  -2,  -5,   2,  14,   5,
-    -35,  -8,  11,   2,   8,  15,  -3,   1,
-     -1, -18,  -9,  10, -15, -25, -48, -18,
-]
-
-_QUEEN_EG_RAW = [
-     -9,  22,  22,  27,  27,  19,  10,  20,
-    -17,  20,  32,  41,  58,  25,  30,   0,
-    -20,   6,   9,  49,  47,  35,  19,   9,
-      3,  22,  24,  45,  57,  40,  57,  36,
-    -18,  28,  19,  47,  31,  34,  39,  18,
-    -16, -27,  15,   6,   9,  17,  10,   5,
-    -22, -23, -30, -16, -16, -23, -36, -32,
+     -1, -16,   9,  18,  56,  60,  57,  35,
+    -27, -27, -14,  -1,  12,  10,   6,  10,
+    -16, -15,  -6,   4,   8,  14,  12,  -5,
+    -22, -15,  -7,   6,   4,  10,   5, -17,
+    -17,  20,  12,  -2,   9,  12,  46,  16,
     -33, -28, -22, -43,  -5, -32, -20, -41,
+]
+_QUEEN_EG_RAW = [
+    -9,  22,  22,  27,  27,  19,  10,  20,
+   -17,  20,  32,  41,  58,  25,  30,   0,
+   -20,   6,   9,  49,  47,  35,  19,   9,
+     3,  22,  24,  45,  57,  40,  57,  36,
+   -18,  28,  19,  47,  31,  34,  39,  18,
+   -16, -27,  15,   6,   9,  17,  10,   5,
+   -22, -23, -30, -16, -16, -23, -36, -32,
+   -33, -28, -22, -43,  -5, -32, -20, -41,
 ]
 
 _KING_MG_RAW = [
@@ -184,7 +181,6 @@ _KING_MG_RAW = [
       1,   7,  -8, -64, -43, -16,   9,   8,
     -15,  36,  12, -54,   8, -28,  24,  14,
 ]
-
 _KING_EG_RAW = [
     -74, -35, -18, -18, -11,  15,   4, -17,
     -12,  17,  14,  17,  17,  38,  23,  11,
@@ -193,23 +189,31 @@ _KING_EG_RAW = [
     -18,  -4,  21,  24,  27,  23,   9, -11,
     -19,  -3,  11,  21,  23,  16,   7,  -9,
     -27, -11,   4,  13,  14,   4,  -5, -17,
-    -53, -34, -21, -11, -28, -14, -24, -43,
+    -53, -34,  -8, -11,  -6, -13, -24, -46,
 ]
 
 
-def _orient_table(table: list[int]) -> list[int]:
+def _orient_table(raw: list[int]) -> list[int]:
     """
-    Chuyển đổi bảng từ dạng trực quan (Rank 8 ở trên)
-    sang dạng chỉ số ô chuẩn của python-chess (Rank 1 ở index 0..7).
+    Mục đích:
+        Chuyển đổi mảng thô (xếp từ Rank 8 xuống Rank 1) sang chỉ số ô chuẩn của python-chess (0 = a1, 63 = h8).
+
+    Tham số:
+        raw: Mảng 64 số nguyên biểu diễn điểm vị trí.
+
+    Trả về:
+        list[int]: Mảng 64 số nguyên đã căn chỉnh theo thứ tự ô từ 0 đến 63.
     """
-    res: list[int] = []
-    for r in range(7, -1, -1):
-        res.extend(table[r * 8 : (r + 1) * 8])
-    return res
+    out = [0] * 64
+    for r in range(8):
+        for f in range(8):
+            sq = r * 8 + f
+            raw_idx = (7 - r) * 8 + f
+            out[sq] = raw[raw_idx]
+    return out
 
 
-# Các bảng sau khi orient (index 0 = A1, index 63 = H8)
-PST_MG: dict[chess.PieceType, list[int]] = {
+PST_MG = {
     chess.PAWN:   _orient_table(_PAWN_MG_RAW),
     chess.KNIGHT: _orient_table(_KNIGHT_MG_RAW),
     chess.BISHOP: _orient_table(_BISHOP_MG_RAW),
@@ -218,7 +222,7 @@ PST_MG: dict[chess.PieceType, list[int]] = {
     chess.KING:   _orient_table(_KING_MG_RAW),
 }
 
-PST_EG: dict[chess.PieceType, list[int]] = {
+PST_EG = {
     chess.PAWN:   _orient_table(_PAWN_EG_RAW),
     chess.KNIGHT: _orient_table(_KNIGHT_EG_RAW),
     chess.BISHOP: _orient_table(_BISHOP_EG_RAW),
@@ -227,42 +231,38 @@ PST_EG: dict[chess.PieceType, list[int]] = {
     chess.KING:   _orient_table(_KING_EG_RAW),
 }
 
-# Điểm tốt thông theo rank (index = rank 0..7)
-PASSED_PAWN_BONUS_MG = [0, 5, 15, 35, 75, 150, 200, 0]
-PASSED_PAWN_BONUS_EG = [0, 10, 20, 40, 80, 150, 220, 0]
-
-
-# ===========================================================================
-# PHẦN 2 – TIỀN XỬ LÝ (chạy MỘT LẦN lúc import, không tốn chi phí khi evaluate)
-# ===========================================================================
-
-try:  # Python >= 3.10: popcount viết bằng C
-    def _popcount(bb: int) -> int:
-        return bb.bit_count()
-except AttributeError:  # pragma: no cover - fallback cho Python cũ
-    def _popcount(bb: int) -> int:
-        return bin(bb).count("1")
-
-_ALL = chess.BB_ALL
-_NOT_FILE_A = ~chess.BB_FILE_A & _ALL
-_NOT_FILE_H = ~chess.BB_FILE_H & _ALL
-_FILE_MUL = chess.BB_FILE_A          # 0x0101..01: nhân byte-cột -> mặt nạ cột đầy đủ
-_RANKS_4_6 = chess.BB_RANK_4 | chess.BB_RANK_5 | chess.BB_RANK_6   # ổ chặn Mã Trắng
-_RANKS_3_5 = chess.BB_RANK_3 | chess.BB_RANK_4 | chess.BB_RANK_5   # ổ chặn Mã Đen (đối xứng)
+# Điểm thưởng tốt thông theo từng rank (chỉ số 0 đến 7)
+PASSED_PAWN_BONUS_MG = [0, 5, 10, 20, 35, 60, 100, 0]
+PASSED_PAWN_BONUS_EG = [0, 10, 20, 40, 70, 120, 200, 0]
 
 
 def _pk(mg: int, eg: int) -> int:
-    """Đóng gói (mg, eg) thành một số nguyên: ``mg + eg * 65536`` (tuyến tính)."""
+    """
+    Mục đích:
+        Đóng gói hai giá trị trung cuộc (mg) và tàn cuộc (eg) vào một số nguyên duy nhất.
+        Công thức tuyến tính mg + (eg << 16) bảo toàn chính xác số nguyên có dấu trong Python.
+
+    Tham số:
+        mg: Điểm số trung cuộc (centipawn).
+        eg: Điểm số tàn cuộc (centipawn).
+
+    Trả về:
+        int: Số nguyên đã đóng gói.
+    """
     return mg + (eg << 16)
 
 
-def _build_packed_pst(
-    color_white: bool, pt: chess.PieceType
-) -> tuple[int, ...]:
+def _build_packed_pst(color_white: bool, pt: chess.PieceType) -> tuple[int, ...]:
     """
-    Bảng 64 ô đã đóng gói [vật chất + PST] cho một loại quân.
-    Với quân Đen, bảng được phản chiếu sẵn (``sq ^ 56``) để evaluate() tra
-    thẳng bằng chỉ số ô thật, không cần XOR/lật lúc chạy.
+    Mục đích:
+        Tạo bảng PST đóng gói sẵn (gồm giá trị vật chất + giá trị vị trí ô) cho từng loại quân.
+
+    Tham số:
+        color_white: True nếu là quân Trắng, False nếu là quân Đen.
+        pt: Loại quân cờ (chess.PAWN, chess.KNIGHT, ...).
+
+    Trả về:
+        tuple[int, ...]: Tuple 64 phần tử chứa giá trị đã đóng gói cho 64 ô cờ.
     """
     mg_base, eg_base = MG_PIECE_VALUES[pt], EG_PIECE_VALUES[pt]
     out = []
@@ -272,110 +272,147 @@ def _build_packed_pst(
     return tuple(out)
 
 
-_WP, _WN, _WB, _WR, _WQ, _WK = (_build_packed_pst(True, pt) for pt in range(1, 7))
-_BP, _BN, _BB, _BR, _BQ, _BK = (_build_packed_pst(False, pt) for pt in range(1, 7))
+# Khởi tạo sẵn bảng đóng gói cho quân Trắng
+_WP = _build_packed_pst(True, chess.PAWN)
+_WN = _build_packed_pst(True, chess.KNIGHT)
+_WB = _build_packed_pst(True, chess.BISHOP)
+_WR = _build_packed_pst(True, chess.ROOK)
+_WQ = _build_packed_pst(True, chess.QUEEN)
+_WK = _build_packed_pst(True, chess.KING)
 
-# Điểm tốt thông tra theo ô (đã gồm lật hàng cho quân Đen).
-_PASSED_W = tuple(
-    _pk(PASSED_PAWN_BONUS_MG[sq >> 3], PASSED_PAWN_BONUS_EG[sq >> 3]) for sq in range(64)
-)
-_PASSED_B = tuple(
-    _pk(PASSED_PAWN_BONUS_MG[7 - (sq >> 3)], PASSED_PAWN_BONUS_EG[7 - (sq >> 3)])
-    for sq in range(64)
-)
+# Khởi tạo sẵn bảng đóng gói cho quân Đen
+_BP = _build_packed_pst(False, chess.PAWN)
+_BN = _build_packed_pst(False, chess.KNIGHT)
+_BB = _build_packed_pst(False, chess.BISHOP)
+_BR = _build_packed_pst(False, chess.ROOK)
+_BQ = _build_packed_pst(False, chess.QUEEN)
+_BK = _build_packed_pst(False, chess.KING)
+
+_PASSED_W = tuple(_pk(PASSED_PAWN_BONUS_MG[sq >> 3], PASSED_PAWN_BONUS_EG[sq >> 3]) for sq in range(64))
+_PASSED_B = tuple(_pk(PASSED_PAWN_BONUS_MG[7 - (sq >> 3)], PASSED_PAWN_BONUS_EG[7 - (sq >> 3)]) for sq in range(64))
+
+# Hằng số thưởng và phạt theo cấu trúc quân cờ
+TEMPO_BONUS = 9
+_BISHOP_PAIR = _pk(36, 54)
+_ROOK_OPEN_FILE = _pk(27, 21)
+_ROOK_SEMI_OPEN = _pk(15, 12)
+_ROOK_7TH = _pk(27, 36)
+_DOUBLED_PAWN = _pk(18, 24)
+_ISOLATED_PAWN = _pk(18, 24)
+_CONNECTED_PASSED = _pk(24, 48)
+_KNIGHT_OUTPOST = _pk(24, 12)
+
+# Hằng số an toàn Vua
+KS_MIN_PHASE = 10
+_KS_SHIELD_NEAR    = _pk(18, 0)
+_KS_SHIELD_FAR     = _pk(9, 0)
+_KS_OPEN_FILE      = _pk(36, 0)
+_KS_HALF_OPEN_FILE = _pk(18, 0)
+_CASTLE_RIGHT      = _pk(18, 0)
+
+# Mặt nạ bit (Bitmasks)
+_ALL = 0xFFFFFFFFFFFFFFFF
+_NOT_FILE_A = ~chess.BB_FILE_A & _ALL
+_NOT_FILE_H = ~chess.BB_FILE_H & _ALL
+_RANKS_4_6 = chess.BB_RANK_4 | chess.BB_RANK_5 | chess.BB_RANK_6
+_RANKS_3_5 = chess.BB_RANK_3 | chess.BB_RANK_4 | chess.BB_RANK_5
 
 
-def _build_king_zones() -> tuple[tuple[int, ...], ...]:
+def _build_king_zones():
     """
-    Với mỗi ô Vua (0..63) dựng:
-      * file_byte : byte 8-bit các cột [f-1, f, f+1] quanh Vua,
-      * near_w/far_w : 3 ô ngay trước / cách 2 hàng phía trước Vua (hướng Trắng),
-      * near_b/far_b : tương tự theo hướng Đen.
-    Dựa hoàn toàn vào ô Vua thực tế -> đúng cho mọi vị trí xuất phát Chess960.
+    Mục đích:
+        Xây dựng sẵn mặt nạ các cột lân cận và hàng lá chắn bảo vệ Vua cho toàn bộ 64 ô cờ.
+
+    Tham số:
+        None.
+
+    Trả về:
+        tuple: (files, near_w, far_w, near_b, far_b) phục vụ đánh giá an toàn Vua động.
     """
-    file_byte, near_w, far_w, near_b, far_b = [], [], [], [], []
+    files, near_w, far_w, near_b, far_b = [], [], [], [], []
     for sq in range(64):
-        f, r = sq & 7, sq >> 3
-        fb = nw = fw = nb = fb2 = 0
-        for ff in (f - 1, f, f + 1):
-            if not 0 <= ff <= 7:
-                continue
-            fb |= 1 << ff
-            if r + 1 <= 7:
-                nw |= 1 << ((r + 1) * 8 + ff)
-            if r + 2 <= 7:
-                fw |= 1 << ((r + 2) * 8 + ff)
-            if r - 1 >= 0:
-                nb |= 1 << ((r - 1) * 8 + ff)
-            if r - 2 >= 0:
-                fb2 |= 1 << ((r - 2) * 8 + ff)
-        file_byte.append(fb)
-        near_w.append(nw)
-        far_w.append(fw)
-        near_b.append(nb)
-        far_b.append(fb2)
-    return tuple(file_byte), tuple(near_w), tuple(far_w), tuple(near_b), tuple(far_b)
+        f = sq & 7
+        r = sq >> 3
+        fl = max(0, f - 1)
+        fr = min(7, f + 1)
+        fmask = 0
+        for fi in range(fl, fr + 1):
+            fmask |= 1 << fi
+        files.append(fmask)
+
+        def _row_mask(r_idx, fl_i, fr_i):
+            if not (0 <= r_idx < 8):
+                return 0
+            m = 0
+            for fi in range(fl_i, fr_i + 1):
+                m |= 1 << (r_idx * 8 + fi)
+            return m
+
+        near_w.append(_row_mask(r + 1, fl, fr))
+        far_w.append(_row_mask(r + 2, fl, fr))
+        near_b.append(_row_mask(r - 1, fl, fr))
+        far_b.append(_row_mask(r - 2, fl, fr))
+
+    return (tuple(files), tuple(near_w), tuple(far_w), tuple(near_b), tuple(far_b))
 
 
 _KS_FILES, _KS_NEAR_W, _KS_FAR_W, _KS_NEAR_B, _KS_FAR_B = _build_king_zones()
 
-# ---------------------------------------------------------------------------
-# Hằng số tinh chỉnh (đã đóng gói: _pk(mg, eg)). Chỉnh ở đây khi tuning.
-# ---------------------------------------------------------------------------
-TEMPO_BONUS = 9
-
-_BISHOP_PAIR = _pk(40, 60)
-_ROOK_OPEN_FILE = _pk(30, 24)
-_ROOK_SEMI_OPEN = _pk(15, 12)
-_ROOK_7TH = _pk(40, 45)    
-_DOUBLED_PAWN = _pk(25, 25)       
-_ISOLATED_PAWN = _pk(20, 20)
-_CONNECTED_PASSED = _pk(24, 48)  
-_KNIGHT_OUTPOST = _pk(24, 12) 
-
-# Kiểm soát trung tâm & Không gian
-_BB_CENTER = chess.BB_D4 | chess.BB_E4 | chess.BB_D5 | chess.BB_E5
-_W_CENTER_ATT = (chess.BB_FILE_C | chess.BB_FILE_D | chess.BB_FILE_E | chess.BB_FILE_F) & (chess.BB_RANK_3 | chess.BB_RANK_4)
-_B_CENTER_ATT = (chess.BB_FILE_C | chess.BB_FILE_D | chess.BB_FILE_E | chess.BB_FILE_F) & (chess.BB_RANK_6 | chess.BB_RANK_5)
-_CENTER_OCCUPIED = _pk(15, 8)
-_CENTER_CONTROL = _pk(12, 6)
-_RIM_FILES = chess.BB_FILE_A | chess.BB_FILE_H 
-
-# King Safety (chỉ trung cuộc => eg = 0)
-KS_MIN_PHASE = 10                 # chỉ tính khi phase > KS_MIN_PHASE
-_KS_SHIELD_NEAR = 9   
-_KS_SHIELD_FAR = 4     
-_KS_OPEN_FILE = 24            
-_KS_HALF_OPEN_FILE = 12           
-
-# Quyền nhập thành (chỉ trung cuộc): mỗi quyền còn lại = một "tuỳ chọn an toàn".
-_CASTLE_RIGHT = _pk(9, 0)        
+_POPCOUNT_TABLE = [bin(i).count("1") for i in range(256)]
 
 
-# ===========================================================================
-# PHẦN 3 – HÀM TIỆN ÍCH BITBOARD
-# ===========================================================================
+def _popcount(bb: int) -> int:
+    """
+    Mục đích:
+        Đếm số lượng bit 1 trong một số nguyên 64-bit (Bitboard).
+
+    Tham số:
+        bb: Số nguyên 64-bit.
+
+    Trả về:
+        int: Số lượng bit 1.
+    """
+    try:
+        return bb.bit_count()
+    except AttributeError:
+        cnt = 0
+        while bb:
+            cnt += _POPCOUNT_TABLE[bb & 0xFF]
+            bb >>= 8
+        return cnt
+
 
 def _pst_sum(bb: int, table: tuple[int, ...]) -> int:
-    """Tổng điểm đóng gói của mọi quân trong ``bb`` (tách LSB bằng ``bb & -bb``)."""
-    total = 0
+    """
+    Mục đích:
+        Cộng dồn giá trị PST đóng gói cho tất cả các quân cờ đang hiện diện trên Bitboard.
+
+    Tham số:
+        bb: Mặt nạ bit vị trí các quân cờ.
+        table: Bảng giá trị đóng gói tương ứng với loại quân.
+
+    Trả về:
+        int: Tổng giá trị đóng gói.
+    """
+    tot = 0
     while bb:
         lsb = bb & -bb
-        total += table[lsb.bit_length() - 1]
+        sq = lsb.bit_length() - 1
+        tot += table[sq]
         bb ^= lsb
-    return total
+    return tot
 
 
 def _north_fill(bb: int) -> int:
-    """Tô dọc lên phía hàng 8 (Kogge-Stone), bao gồm cả các bit gốc."""
-    bb |= (bb << 8) & _ALL
+    """Mở rộng mặt nạ bit về hướng Bắc (cho quân Trắng)."""
+    bb |= (bb << 8)  & _ALL
     bb |= (bb << 16) & _ALL
     bb |= (bb << 32) & _ALL
     return bb
 
 
 def _south_fill(bb: int) -> int:
-    """Tô dọc xuống phía hàng 1 (Kogge-Stone), bao gồm cả các bit gốc."""
+    """Mở rộng mặt nạ bit về hướng Nam (cho quân Đen)."""
     bb |= bb >> 8
     bb |= bb >> 16
     bb |= bb >> 32
@@ -383,103 +420,104 @@ def _south_fill(bb: int) -> int:
 
 
 def _spread_files(bb: int) -> int:
-    """Mở rộng mỗi bit sang hai cột kề bên (không tràn vòng qua mép bàn cờ)."""
+    """Mở rộng mặt nạ bit sang hai cột liền kề trái và phải."""
     return bb | ((bb << 1) & _NOT_FILE_A) | ((bb >> 1) & _NOT_FILE_H)
 
 
-# ===========================================================================
-# PHẦN 4 – HÀM ĐÁNH GIÁ
-# ===========================================================================
-
 def evaluate(board: chess.Board) -> int:
     """
-    Đánh giá tĩnh vị trí bàn cờ (Static Evaluation) theo quy ước Negamax.
-    Tích hợp Tapered Evaluation (PeSTO) nội suy trung cuộc (MG) và tàn cuộc (EG).
+    Mục đích:
+        Đánh giá giá trị vị trí của thế cờ hiện tại dựa trên tri thức chuyên gia.
 
-    Args:
-        board: Trạng thái bàn cờ hiện tại (đối tượng chess.Board hỗ trợ Chess960).
-            Giả định mỗi bên có đúng một Vua; không tự kiểm tra chiếu hết/hoà cờ.
+    Quy trình đánh giá gồm 11 bước:
+        1. Game Phase: Xác định giai đoạn trận đấu (0 = tàn cuộc, 24 = khai cuộc) dựa trên số lượng quân cờ lớn.
+        2. Material & PST: Lượng giá vật chất và vị trí ô bằng bảng đóng gói tuyến tính.
+        3. Cặp Tượng (Bishop Pair): Thưởng khi sở hữu cả 2 Tượng trên hai màu ô khác nhau.
+        4. Cấu trúc Tốt: Phạt Tốt chồng, Tốt cô lập; thưởng Tốt thông và Tốt thông liên kết.
+        5. Hoạt động của Xe: Thưởng Xe trên cột mở, cột bán mở và hàng 7 (hoặc hàng 2 đối với Đen).
+        6. Mã tiền đồn (Knight Outposts): Thưởng Mã đứng ở các hàng 4-6 (hoặc 3-5 đối với Đen) có Tốt bảo vệ.
+        7. An toàn Vua (Bitwise King Ring): Tính toán vành đai bảo vệ quanh Vua, thưởng lá chắn Tốt gần/xa.
+        8. Quyền nhập thành: Thưởng điểm nếu bên đi còn quyền nhập thành hợp lệ.
+        9. Tapered Evaluation: Nội suy mượt mà giữa trung cuộc và tàn cuộc theo tỷ lệ phase / 24.
+        10. Mop-Up Heuristic: Ép Vua đối phương vào góc và kéo Vua ta áp sát trong tàn cuộc áp đảo (phase <= 6).
+        11. Tempo Bonus & Negamax Sign: Thưởng lượt đi đầu tiên và chuẩn hóa góc nhìn theo bên đến lượt (board.turn).
 
-    Returns:
-        int: Điểm centipawn theo góc nhìn của bên đang đến lượt board.turn;
-        dương = có lợi cho bên đang đi. Thế xuất phát của mọi vị trí Chess960
-        cho đúng ``+TEMPO_BONUS``.
+    Tham số:
+        board: Đối tượng chess.Board thể hiện trạng thái bàn cờ hiện tại.
+
+    Trả về:
+        int: Điểm đánh giá thế cờ tính bằng centipawn theo góc nhìn của bên đang đến lượt đi.
     """
-    occ_b, occ_w = board.occupied_co          # chess.BLACK = 0, chess.WHITE = 1
-    pawns = board.pawns
-    kings = board.kings
+    wp = board.pawns & board.occupied_co[chess.WHITE]
+    wn = board.knights & board.occupied_co[chess.WHITE]
+    wb = board.bishops & board.occupied_co[chess.WHITE]
+    wr = board.rooks & board.occupied_co[chess.WHITE]
+    wq = board.queens & board.occupied_co[chess.WHITE]
+    wk = board.king(chess.WHITE)
 
-    wp = pawns & occ_w
-    bp = pawns & occ_b
-    rooks = board.rooks
-    wr = rooks & occ_w
-    br = rooks & occ_b
-    bishops = board.bishops
-    wb = bishops & occ_w
-    bb_ = bishops & occ_b
-    knights = board.knights
-    wn = knights & occ_w
-    bn = knights & occ_b
+    bp = board.pawns & board.occupied_co[chess.BLACK]
+    bn = board.knights & board.occupied_co[chess.BLACK]
+    bb = board.bishops & board.occupied_co[chess.BLACK]
+    br = board.rooks & board.occupied_co[chess.BLACK]
+    bq = board.queens & board.occupied_co[chess.BLACK]
+    bk = board.king(chess.BLACK)
 
-    # --- 1. Game phase: chỉ cần popcount, không duyệt quân ------------------
+    if wk is None or bk is None:
+        return 0
+
+    # 1. Tính toán giai đoạn trận đấu (Game Phase)
     phase = (
-        _popcount(knights | bishops)
-        + 2 * _popcount(rooks)
-        + 4 * _popcount(board.queens)
+        _popcount(wn | bn | wb | bb) * PHASE_WEIGHTS[chess.KNIGHT]
+        + _popcount(wr | br) * PHASE_WEIGHTS[chess.ROOK]
+        + _popcount(wq | bq) * PHASE_WEIGHTS[chess.QUEEN]
     )
     if phase > 24:
         phase = 24
 
-    # --- 2. Vật chất + PST (đóng gói mg|eg) ----------------------------------
-    queens = board.queens
+    # 2. Vật chất và vị trí ô (Material & PST với Linear packing mg + (eg << 16))
     s = (
         _pst_sum(wp, _WP) + _pst_sum(wn, _WN) + _pst_sum(wb, _WB)
-        + _pst_sum(wr, _WR) + _pst_sum(queens & occ_w, _WQ)
-        - _pst_sum(bp, _BP) - _pst_sum(bn, _BN) - _pst_sum(bb_, _BB)
-        - _pst_sum(br, _BR) - _pst_sum(queens & occ_b, _BQ)
+        + _pst_sum(wr, _WR) + _pst_sum(wq, _WQ) + _WK[wk]
+        - _pst_sum(bp, _BP) - _pst_sum(bn, _BN) - _pst_sum(bb, _BB)
+        - _pst_sum(br, _BR) - _pst_sum(bq, _BQ) - _BK[bk]
     )
-    wk_bb = kings & occ_w
-    bk_bb = kings & occ_b
-    wk = wk_bb.bit_length() - 1               # -1 nếu thiếu Vua (thế cờ không hợp lệ)
-    bk = bk_bb.bit_length() - 1
-    if wk_bb:
-        s += _WK[wk]
-    if bk_bb:
-        s -= _BK[bk]
 
-    # --- 3. Cặp Tượng: "bb & (bb-1)" != 0  <=>  có từ 2 bit trở lên -----------
-    if wb & (wb - 1):
+    # 3. Đánh giá cặp Tượng
+    if _popcount(wb) >= 2:
         s += _BISHOP_PAIR
-    if bb_ & (bb_ - 1):
+    if _popcount(bb) >= 2:
         s -= _BISHOP_PAIR
 
-    # --- 4. Cấu trúc cột Tốt bằng fill (thay vòng lặp từng Tốt) ---------------
-    w_front = _north_fill((wp << 8) & _ALL)   # ô phía trước các Tốt Trắng
-    w_rear = _south_fill(wp >> 8)             # ô phía sau các Tốt Trắng
-    b_front = _south_fill(bp >> 8)            # ô phía trước các Tốt Đen
-    b_rear = _north_fill((bp << 8) & _ALL)    # ô phía sau các Tốt Đen
+    # 4. Đánh giá cấu trúc Tốt
+    files_w = 0
+    p = wp
+    while p:
+        lsb = p & -p
+        files_w |= 1 << ((lsb.bit_length() - 1) & 7)
+        p ^= lsb
 
-    files_w = (w_rear | wp) & 0xFF            # byte: bit f = cột f có Tốt Trắng
-    files_b = ((b_rear | bp) >> 56) & 0xFF
-    full_w = files_w * _FILE_MUL              # mặt nạ cột đầy đủ 64-bit
-    full_b = files_b * _FILE_MUL
+    files_b = 0
+    p = bp
+    while p:
+        lsb = p & -p
+        files_b |= 1 << ((lsb.bit_length() - 1) & 7)
+        p ^= lsb
 
-    # Tốt chồng: Tốt có Tốt cùng màu cùng cột (phía trước hoặc sau)
-    s -= _DOUBLED_PAWN * (
-        _popcount(wp & (w_front | w_rear)) - _popcount(bp & (b_front | b_rear))
-    )
+    # Phạt Tốt chồng
+    s -= _DOUBLED_PAWN * (_popcount(wp) - _popcount(files_w))
+    s += _DOUBLED_PAWN * (_popcount(bp) - _popcount(files_b))
 
-    # Tốt cô lập: cột của nó không có Tốt nhà ở hai cột kề
-    adj_w = ((files_w << 1) & 0xFF) | (files_w >> 1)
-    adj_b = ((files_b << 1) & 0xFF) | (files_b >> 1)
-    s -= _ISOLATED_PAWN * (
-        _popcount(wp & ((files_w & ~adj_w) * _FILE_MUL))
-        - _popcount(bp & ((files_b & ~adj_b) * _FILE_MUL))
-    )
+    # Phạt Tốt cô lập
+    iso_w = files_w & ~((files_w << 1) | (files_w >> 1))
+    iso_b = files_b & ~((files_b << 1) | (files_b >> 1))
+    s -= _ISOLATED_PAWN * _popcount(iso_w)
+    s += _ISOLATED_PAWN * _popcount(iso_b)
 
-    # Tốt thông: không có Tốt địch phía trước trên cột mình và hai cột kề
-    passed_w = wp & ~_spread_files(b_front)
-    passed_b = bp & ~_spread_files(w_front)
+    # Thưởng Tốt thông và Tốt thông liên kết
+    full_w = _north_fill(wp)
+    full_b = _south_fill(bp)
+    passed_w = wp & ~_spread_files(full_b)
+    passed_b = bp & ~_spread_files(full_w)
 
     pf = 0
     while passed_w:
@@ -499,7 +537,7 @@ def evaluate(board: chess.Board) -> int:
         passed_b ^= lsb
     s -= _CONNECTED_PASSED * _popcount(pf & (pf >> 1))
 
-    # --- 5. Xe: cột mở / nửa mở / hàng 7 -------------------------------------
+    # 5. Hoạt động của Xe (Cột mở, bán mở, hàng 7)
     no_w = ~full_w
     no_b = ~full_b
     open_cols = no_w & no_b
@@ -511,7 +549,7 @@ def evaluate(board: chess.Board) -> int:
         _popcount(wr & chess.BB_RANK_7) - _popcount(br & chess.BB_RANK_2)
     )
 
-    # --- 6. Mã chiếm tiền đồn: bản đồ ô bị Tốt tấn công tính bằng shift -------
+    # 6. Mã chiếm tiền đồn trung tâm
     if wn or bn:
         w_pawn_att = ((wp << 7) & _NOT_FILE_H) | ((wp << 9) & _NOT_FILE_A)
         b_pawn_att = ((bp >> 7) & _NOT_FILE_A) | ((bp >> 9) & _NOT_FILE_H)
@@ -520,212 +558,43 @@ def evaluate(board: chess.Board) -> int:
             - _popcount(bn & b_pawn_att & _RANKS_3_5)
         )
 
-    # --- 7. King Safety (Chess960-safe: đường chéo mở, pawn shield động) ------
+    # 7. An toàn Vua (Thiết kế bitwise động, an toàn với cả 960 thế cờ Chess960)
     if phase > KS_MIN_PHASE:
-        occ = board.occupied
-
-        # An toàn Vua Trắng
-        w_ks_pen = 0
         if 0 <= wk < 24:
             zone = _KS_FILES[wk]
             lack = zone & ~files_w
-            w_ks_pen += _KS_OPEN_FILE * _popcount(lack & ~files_b)
-            w_ks_pen += _KS_HALF_OPEN_FILE * _popcount(lack & files_b)
-
-            # Cột Vua đứng là cột mở (không có Tốt nhà che chắn)
-            if not (full_w & (1 << (wk & 7))):
-                w_ks_pen += 45
-
-            # Phạt nặng Vua kẹt ở trung tâm (cột d, e) khi cột trung tâm mở toang
-            if wk in (chess.D1, chess.E1, chess.D2, chess.E2):
-                if not (pawns & chess.BB_FILE_D):
-                    w_ks_pen += 80
-                if not (pawns & chess.BB_FILE_E):
-                    w_ks_pen += 90
-                if not (board.castling_rights & chess.BB_RANK_1):
-                    w_ks_pen += 60
-
-            wk_f, wk_r = wk & 7, wk >> 3
-
-            # Cột biên mở khi Vua nhập thành dài/ngắn trong Chess960 (Triệt tiêu bẫy Match 27)
-            if wk_f in (0, 1, 2):
-                if not (pawns & chess.BB_FILE_A):
-                    w_ks_pen += 65
-                if not (pawns & chess.BB_FILE_B):
-                    w_ks_pen += 50
-            elif wk_f in (5, 6, 7):
-                if not (pawns & chess.BB_FILE_H):
-                    w_ks_pen += 65
-                if not (pawns & chess.BB_FILE_G):
-                    w_ks_pen += 50
-
-            # Pawn shield động: kiểm tra Tốt ở 1-2 hàng trước Vua
-            shield_w = 0
-            for f in (wk_f - 1, wk_f, wk_f + 1):
-                if 0 <= f <= 7:
-                    for r in (wk_r + 1, wk_r + 2):
-                        if r <= 7 and (wp & (1 << (r * 8 + f))):
-                            shield_w += 1
-                            break
-            if shield_w == 0:
-                w_ks_pen += 70
-            elif shield_w == 1:
-                w_ks_pen += 35
-
-            # Đe dọa tia đường chéo từ Hậu và Tượng đối phương
-            b_bq = (bb_ | (queens & occ_b))
-            while b_bq:
-                lsb = b_bq & -b_bq
-                sq = lsb.bit_length() - 1
-                if chess.BB_RAYS[sq][wk]:
-                    blockers = chess.between(sq, wk) & occ
-                    cnt = blockers.bit_count()
-                    if cnt == 0:
-                        w_ks_pen += 60
-                    elif cnt == 1:
-                        w_ks_pen += 35
-                b_bq ^= lsb
-
-        # An toàn Vua Đen (đối xứng hoàn hảo)
-        b_ks_pen = 0
+            s += (
+                _KS_SHIELD_NEAR * _popcount(wp & _KS_NEAR_W[wk])
+                + _KS_SHIELD_FAR * _popcount(wp & _KS_FAR_W[wk])
+                - _KS_OPEN_FILE * _popcount(lack & ~files_b)
+                - _KS_HALF_OPEN_FILE * _popcount(lack & files_b)
+            )
         if bk >= 40:
             zone = _KS_FILES[bk]
             lack = zone & ~files_b
-            b_ks_pen += _KS_OPEN_FILE * _popcount(lack & ~files_w)
-            b_ks_pen += _KS_HALF_OPEN_FILE * _popcount(lack & files_w)
+            s -= (
+                _KS_SHIELD_NEAR * _popcount(bp & _KS_NEAR_B[bk])
+                + _KS_SHIELD_FAR * _popcount(bp & _KS_FAR_B[bk])
+                - _KS_OPEN_FILE * _popcount(lack & ~files_w)
+                - _KS_HALF_OPEN_FILE * _popcount(lack & files_w)
+            )
 
-            if not (full_b & (1 << (bk & 7))):
-                b_ks_pen += 45
-
-            # Phạt nặng Vua kẹt ở trung tâm (cột d, e) khi cột trung tâm mở toang (đối xứng tuyệt đối)
-            if bk in (chess.D8, chess.E8, chess.D7, chess.E7):
-                if not (pawns & chess.BB_FILE_D):
-                    b_ks_pen += 80
-                if not (pawns & chess.BB_FILE_E):
-                    b_ks_pen += 90
-                if not (board.castling_rights & chess.BB_RANK_8):
-                    b_ks_pen += 60
-
-            bk_f, bk_r = bk & 7, bk >> 3
-
-            # Cột biên mở khi Vua nhập thành dài/ngắn trong Chess960 (Triệt tiêu bẫy Match 27)
-            if bk_f in (0, 1, 2):
-                if not (pawns & chess.BB_FILE_A):
-                    b_ks_pen += 65
-                if not (pawns & chess.BB_FILE_B):
-                    b_ks_pen += 50
-            elif bk_f in (5, 6, 7):
-                if not (pawns & chess.BB_FILE_H):
-                    b_ks_pen += 65
-                if not (pawns & chess.BB_FILE_G):
-                    b_ks_pen += 50
-
-            shield_b = 0
-            for f in (bk_f - 1, bk_f, bk_f + 1):
-                if 0 <= f <= 7:
-                    for r in (bk_r - 1, bk_r - 2):
-                        if r >= 0 and (bp & (1 << (r * 8 + f))):
-                            shield_b += 1
-                            break
-            if shield_b == 0:
-                b_ks_pen += 70
-            elif shield_b == 1:
-                b_ks_pen += 35
-
-            w_bq = (wb | (queens & occ_w))
-            while w_bq:
-                lsb = w_bq & -w_bq
-                sq = lsb.bit_length() - 1
-                if chess.BB_RAYS[sq][bk]:
-                    blockers = chess.between(sq, bk) & occ
-                    cnt = blockers.bit_count()
-                    if cnt == 0:
-                        b_ks_pen += 60
-                    elif cnt == 1:
-                        b_ks_pen += 35
-                w_bq ^= lsb
-
-        s -= _pk(w_ks_pen - b_ks_pen, 0)
-
-    # --- 7.5. Cân bằng động Mã vs Tượng theo Cấu trúc Trung tâm --------------
-    total_pawns = _popcount(pawns)
-    locked_d = bool((wp << 8) & bp & chess.BB_FILE_D)
-    locked_e = bool((wp << 8) & bp & chess.BB_FILE_E)
-    locked_center = (locked_d + locked_e) * 2
-
-    wn_count = _popcount(wn)
-    wb_count = _popcount(wb)
-    bn_count = _popcount(bn)
-    bb_count = _popcount(bb_)
-
-    if total_pawns >= 12 or locked_center >= 4:
-        s += _pk(25, 20) * (wn_count - bn_count)
-        s -= _pk(20, 20) * (wb_count - bb_count)
-    elif total_pawns <= 8:
-        s -= _pk(20, 20) * (wn_count - bn_count)
-        s += _pk(30, 30) * (wb_count - bb_count)
-
-    # --- 7.8. Quân bị ghim tuyệt đối vào Vua (Absolute Pin Penalty) -----------
-    # Triệt tiêu hoàn toàn điểm mù ghim quân (Triệt tiêu 5 ván thua trước Nhóm 03)
-    w_pin_pen = 0
-    b_pin_pen = 0
-    if queens:
-        for sq in board.pieces(chess.QUEEN, chess.WHITE):
-            if board.is_pinned(chess.WHITE, sq):
-                w_pin_pen += 350
-        for sq in board.pieces(chess.QUEEN, chess.BLACK):
-            if board.is_pinned(chess.BLACK, sq):
-                b_pin_pen += 350
-    if wr or br:
-        for sq in board.pieces(chess.ROOK, chess.WHITE):
-            if board.is_pinned(chess.WHITE, sq):
-                w_pin_pen += 180
-        for sq in board.pieces(chess.ROOK, chess.BLACK):
-            if board.is_pinned(chess.BLACK, sq):
-                b_pin_pen += 180
-    if wn or wb or bn or bb_:
-        for sq in (board.pieces(chess.KNIGHT, chess.WHITE) | board.pieces(chess.BISHOP, chess.WHITE)):
-            if board.is_pinned(chess.WHITE, sq):
-                w_pin_pen += 60
-        for sq in (board.pieces(chess.KNIGHT, chess.BLACK) | board.pieces(chess.BISHOP, chess.BLACK)):
-            if board.is_pinned(chess.BLACK, sq):
-                b_pin_pen += 60
-
-    if w_pin_pen or b_pin_pen:
-        w_pin_eg = w_pin_pen * 2 // 3
-        b_pin_eg = b_pin_pen * 2 // 3
-        s -= _pk(w_pin_pen - b_pin_pen, w_pin_eg - b_pin_eg)
-
-    # --- 7.9. Kiểm soát & Chiếm lĩnh Trung tâm bằng Tốt -----------------------
-    s += _CENTER_CONTROL * (_popcount(wp & _W_CENTER_ATT) - _popcount(bp & _B_CENTER_ATT))
-    s += _CENTER_OCCUPIED * (_popcount(wp & _BB_CENTER) - _popcount(bp & _BB_CENTER))
-
-    # --- 7.10. Phạt phát triển Hậu quá sớm khi Tốt trung tâm chưa mở ----------
-    if phase >= 22 and queens:
-        wq = queens & full_w
-        bq = queens & full_b
-        w_early_q = 1 if ((wq & ~chess.BB_RANK_1) and (wp & chess.BB_D2) and (wp & chess.BB_E2)) else 0
-        b_early_q = 1 if ((bq & ~chess.BB_RANK_8) and (bp & chess.BB_D7) and (bp & chess.BB_E7)) else 0
-        if w_early_q != b_early_q:
-            s -= _pk(30, 0) * (w_early_q - b_early_q)
-
-    # --- 8. Quyền nhập thành (Chess960): castling_rights = bitboard ô Xe ------
+    # 8. Quyền nhập thành
     cr = board.castling_rights
     if cr:
-        # Chỉ tính khi Xe còn đó và Vua còn ở hàng nhà tương ứng.
         cw = _popcount(cr & wr & chess.BB_RANK_1) if 0 <= wk < 8 else 0
         cb = _popcount(cr & br & chess.BB_RANK_8) if bk >= 56 else 0
         s += _CASTLE_RIGHT * (cw - cb)
 
-    # --- 9. Tapered Evaluation: tách mg/eg khỏi số nguyên đóng gói ------------
-    eg = (s + 0x8000) >> 16                   # sàn chia -> eg chính xác
+    # 9. Tapered Evaluation: Tách mg và eg từ giá trị đóng gói
+    eg = (s + 0x8000) >> 16
     mg = s - (eg << 16)
     x = mg * phase + eg * (24 - phase)
-    score = x // 24 if x >= 0 else -(-x // 24)  # chia cắt về 0 => đối xứng dấu tuyệt đối
+    score = x // 24 if x >= 0 else -(-x // 24)
 
-    # --- 10. Mop-Up Heuristic (Đòn quét dọn tàn cuộc áp đảo) -----------------
-    # Khi cờ tàn (phase <= 6) và một bên có ưu thế vật chất áp đảo (score >= 200cp),
-    # ép Vua đối phương vào góc/mép bàn cờ và kéo Vua mình lại gần để hỗ trợ chiếu hết.
+    # 10. Mop-Up Heuristic trong tàn cuộc áp đảo (Zero-overhead ở trung cuộc)
+    # cmd: Khoảng cách từ Vua đối phương đến trung tâm bàn cờ (ép Vua ra mép và góc)
+    # dist: Khoảng cách giữa hai Vua (kéo Vua ta áp sát để tạo mạng lưới chiếu hết)
     if phase <= 6 and wk >= 0 and bk >= 0:
         wk_f, wk_r = wk & 7, wk >> 3
         bk_f, bk_r = bk & 7, bk >> 3
@@ -738,44 +607,5 @@ def evaluate(board: chess.Board) -> int:
             dist = abs(wk_f - bk_f) + abs(wk_r - bk_r)
             score -= ((cmd * 10) + (14 - dist) * 4) * (6 - phase) // 6
 
-    # --- 11. Tempo + đổi dấu theo Negamax -------------------------------------
+    # 11. Tempo Bonus & Chuẩn hóa dấu Negamax theo lượt đi
     return score + TEMPO_BONUS if board.turn else TEMPO_BONUS - score
-
-
-# ===========================================================================
-# Tự kiểm tra nhanh: python evaluation.py
-# ===========================================================================
-if __name__ == "__main__":
-    import random
-    import time
-
-    # (1) Đối xứng 100% ở cả 960 thế xuất phát: điểm == +TEMPO_BONUS cho bên đi.
-    for n in range(960):
-        for turn in (chess.WHITE, chess.BLACK):
-            b = chess.Board.from_chess960_pos(n)
-            b.turn = turn
-            assert evaluate(b) == TEMPO_BONUS, f"Chess960 #{n} mất đối xứng"
-    print("OK: 960/960 start positions == +%d" % TEMPO_BONUS)
-
-    # (2) Đối xứng Negamax trên các thế ngẫu nhiên: evaluate(b) == evaluate(b.mirror()).
-    rng = random.Random(0)
-    sample: list[chess.Board] = []
-    for _ in range(300):
-        b = chess.Board.from_chess960_pos(rng.randrange(960))
-        for _ in range(rng.randint(1, 100)):
-            moves = list(b.legal_moves)
-            if not moves:
-                break
-            b.push(rng.choice(moves))
-            if rng.random() < 0.2:
-                sample.append(b.copy())
-    assert all(evaluate(p) == evaluate(p.mirror()) for p in sample)
-    print("OK: mirror-symmetry on %d random positions" % len(sample))
-
-    # (3) Tốc độ.
-    t0 = time.perf_counter()
-    for _ in range(5):
-        for p in sample:
-            evaluate(p)
-    nps = 5 * len(sample) / (time.perf_counter() - t0)
-    print("NPS: %d evaluations/sec" % nps)

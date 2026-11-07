@@ -1,33 +1,18 @@
 """
-Module time_manager.py – Quản trị ngân sách thời gian thích ứng đa tầng (Adaptive Delay-Aware Time Manager).
+Module time_manager.py – Quản trị ngân sách thời gian thích ứng đa tầng (Tactical Delay-Aware Time Manager).
 
-Thiết kế tối ưu hóa triệt để dựa trên nguyên lý bù trừ độ trễ GameController (500ms - 1000ms):
-1. Cơ chế trừ giờ của GameController:
+Nguyên lý quản lý thời gian:
+1. Cơ chế hấp thụ độ trễ GameController (500ms - 1000ms):
    elapsed = max(bot_search_time_ms, random_delay_500_1000ms)
-   - Nếu bot_search_time_ms <= 350ms, chi phí thời gian tìm kiếm được "hấp thụ" hoàn toàn
-     bởi độ trễ tối thiểu (500ms), không làm tiêu hao thêm bất kỳ mili-giây nào của đồng hồ!
-   - Nếu bot_search_time_ms vượt quá 500ms, mỗi mili-giây vượt quá sẽ trực tiếp làm hao hụt
-     quỹ thời gian dự trữ cho giai đoạn tàn cuộc sâu (ply 80-120).
-
-2. Phân chia thể thức:
-   - Blitz (initial_time_ms <= 60,000, ví dụ 45s benchmark):
-     + Ước lượng 50 nước cờ (100 plies).
-     + Quỹ trễ tối thiểu trọng tài: turns_left * 550 ms.
-     + Ngân sách tối ưu cho mỗi nước đi: soft_ms = 180 - 280ms, hard_ms = 350ms.
-     + Nhờ đó, bot tìm kiếm ở depth 5-6 nhưng HOÀN TOÀN KHÔNG TỐN THÊM GIỜ ngoài độ trễ bắt buộc.
-     + Khi thời gian còn lại < 8.0s: soft_ms = 30ms, hard_ms = 50ms.
-     + Khi thời gian còn lại < 3.5s: soft_ms = 10ms, hard_ms = 15ms.
-
-   - Standard (initial_time_ms > 60,000, ví dụ 180s - 360s thi đấu chính thức):
-     + Quỹ thời gian dồi dào (180,000ms - 360,000ms).
-     + Dự phòng trễ 60 nước cờ = 40,000ms.
-     + Ngân sách trung bình: soft_ms = 2,500ms - 3,500ms, hard_ms = 4,000ms - 5,500ms.
-     + Đạt độ sâu d=7-8 trên mọi nước đi trung cuộc.
-
-3. Dự đoán phân nhánh mở tầng (Branching Factor Prediction):
-   - Thay vì mở tầng tiếp theo mù quáng khi elapsed < soft_ms, ta kiểm tra:
-     nếu elapsed + last_iteration_ms * 2.8 > hard_ms thì DỪNG LẠI NGAY ở độ sâu hiện tại,
-     không bắt đầu tầng mới để tránh bị timeout dở dang lãng phí tài nguyên.
+   - Trong giai đoạn khai cuộc và trung cuộc (nước 1 - 31): Ngân sách 150ms - 220ms được "hấp thụ" hoàn toàn
+     bởi độ trễ tối thiểu (500ms), không làm tiêu hao thêm thời gian thực của đồng hồ thi đấu.
+2. Kiểm soát ngưỡng thời gian tàn cuộc (Endgame Clock Safety):
+   - Duy trì ngân sách 35ms - 55ms cho các nước sau 40 hoặc khi đồng hồ <= 10s.
+   - Với tốc độ khoảng 85k-95k NPS, ngân sách này duyệt được 3,500 - 5,000 nodes, hoàn tất độ sâu 3-4 ply.
+     Điều này đảm bảo nhận diện kịp thời các đòn chiếu hết, thoát chiếu và bắt quân.
+   - Sau nước 55 (ply >= 110), ngân sách hạ nhẹ xuống 25ms - 40ms để duy trì đồng hồ sinh tồn trong các ván cờ cực dài.
+   - Dưới 1.5 giây còn lại, kích hoạt chế độ khẩn cấp cực hạn (8ms - 15ms) để tránh bị rụng cờ (flag fall).
+3. Đo lường chính xác nano-giây bằng time.perf_counter().
 """
 
 from __future__ import annotations
@@ -38,7 +23,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class TimeBudget:
-    """Cấu trúc dữ liệu chứa giới hạn mềm (soft limit) và giới hạn cứng (hard limit)."""
+    """
+    Cấu trúc dữ liệu chứa giới hạn mềm (soft limit) và giới hạn cứng (hard limit).
+
+    Thuộc tính:
+        soft_ms: Ngưỡng thời gian để quyết định có mở thêm tầng độ sâu mới hay không.
+        hard_ms: Ngưỡng thời gian tối đa tuyệt đối; nếu vượt quá sẽ ngắt tìm kiếm ngay lập tức.
+    """
     soft_ms: int
     hard_ms: int
 
@@ -46,49 +37,69 @@ class TimeBudget:
 def compute_budget_ms(
     time_remaining_ms: int,
     ply: int,
-    initial_time_ms: int,
+    initial_time_ms: int = 45_000,
 ) -> TimeBudget:
     """
-    Tính toán ngân sách thời gian tìm kiếm thích ứng (ms) theo mô hình bù trừ độ trễ.
-    Triệt tiêu 100% rủi ro rụng kim ở ply 120 (Moves 58-60) bằng cách chuyển sang siêu tốc
-    ngay khi bước vào giai đoạn tàn cuộc sâu.
+    Mục đích:
+        Tính toán ngân sách thời gian tìm kiếm thích ứng (ms) theo mô hình bù trừ độ trễ hệ thống.
 
-    Args:
-        time_remaining_ms: Thời gian còn lại của bot trên đồng hồ (ms).
-        ply: Số nửa nước đi (half-moves) đã diễn ra.
-        initial_time_ms: Tổng thời gian ban đầu của ván đấu (ms).
+    Tham số:
+        time_remaining_ms: Thời gian còn lại của bot trên đồng hồ thi đấu (mili-giây).
+        ply: Số nửa nước đi (half-moves) tính từ đầu ván đấu.
+        initial_time_ms: Tổng thời gian ban đầu được cấp cho ván đấu (mili-giây).
 
-    Returns:
-        TimeBudget: Ngân sách gồm soft_ms và hard_ms.
+    Trả về:
+        TimeBudget: Đối tượng chứa soft_ms và hard_ms phù hợp với giai đoạn trận đấu.
     """
     safe_remaining = max(0, time_remaining_ms - 50)
     is_blitz = initial_time_ms <= 60_000
     moves_played = ply // 2
 
     if is_blitz:
-        # Trong Blitz 45s:
-        # Độ trễ GameController là [500ms, 1000ms], do đó bất kỳ nước đi nào có thời gian <= 400ms
-        # đều được hấp thụ 100% bởi độ trễ trọng tài, KHÔNG làm tiêu hao thêm thời gian đồng hồ.
-        # Đảm bảo ngân sách tối thiểu (hard_ms >= 80ms) để Depth 1 và Depth 2 luôn hoàn tất trọn vẹn.
-        if safe_remaining <= 5_000:
-            return TimeBudget(soft_ms=40, hard_ms=80)
-        elif safe_remaining <= 10_000:
-            return TimeBudget(soft_ms=80, hard_ms=150)
-        elif safe_remaining <= 20_000:
-            return TimeBudget(soft_ms=140, hard_ms=220)
+        # 1. Chế độ khẩn cấp cực hạn (dưới 1.5 giây còn lại):
+        if safe_remaining <= 1_500:
+            return TimeBudget(soft_ms=8, hard_ms=15)
+
+        # 2. Chế độ khẩn cấp (dưới 3.5 giây còn lại):
+        elif safe_remaining <= 3_500:
+            return TimeBudget(soft_ms=15, hard_ms=25)
+
+        # 3. Tàn cuộc siêu dài (sau nước 55, ply >= 110):
+        # Hạ nhẹ xuống 25ms - 40ms để duy trì đồng hồ sinh tồn mà vẫn đạt trọn vẹn Depth 3
+        elif moves_played >= 55:
+            return TimeBudget(soft_ms=25, hard_ms=40)
+
+        # 4. Sau nước 40 hoặc quỹ thời gian dưới 10s (Tàn cuộc sâu):
+        # 35ms - 55ms với 90k NPS duyệt được 3,500 - 5,000 nodes, hoàn tất Depth 3-4,
+        # hoàn toàn được hấp thụ bởi độ trễ 500ms của GameController.
+        elif moves_played >= 40 or safe_remaining <= 10_000:
+            return TimeBudget(soft_ms=35, hard_ms=55)
+
+        # 5. Giai đoạn chuyển tiếp (nước 32 - 39):
+        elif moves_played >= 32 or safe_remaining <= 18_000:
+            return TimeBudget(soft_ms=60, hard_ms=90)
+
+        # 6. Giai đoạn khai cuộc & trung cuộc (nước 1 - 31):
         else:
-            return TimeBudget(soft_ms=220, hard_ms=350)
+            return TimeBudget(soft_ms=150, hard_ms=220)
     else:
         # Thể thức Standard (180s - 360s thi đấu chính thức):
-        if safe_remaining <= 8_000:
+        safe_ply = max(0, ply)
+        moves_left = max(1, (301 - safe_ply) // 2)
+        usable_ms = max(0, time_remaining_ms - 1_000)
+
+        if usable_ms <= 3_000:
             return TimeBudget(soft_ms=15, hard_ms=25)
-        elif safe_remaining <= 20_000:
-            return TimeBudget(soft_ms=100, hard_ms=180)
+        elif usable_ms <= 10_000:
+            return TimeBudget(soft_ms=50, hard_ms=100)
+        elif usable_ms <= 25_000:
+            return TimeBudget(soft_ms=120, hard_ms=200)
         else:
-            turns_left = max(10, 60 - moves_played)
-            usable = max(0, safe_remaining - turns_left * 600)
-            soft = max(150, min(usable // turns_left, 3_000))
-            return TimeBudget(soft_ms=soft, hard_ms=int(soft * 1.4))
+            per_move = usable_ms // (moves_left + 10)
+            hard_ms = min(per_move, int(time_remaining_ms * 0.15))
+            hard_ms = max(hard_ms, min(1_500, usable_ms))
+            soft_ms = int(hard_ms * 0.70)
+            return TimeBudget(soft_ms=soft_ms, hard_ms=hard_ms)
 
 
 class TimeManager:
@@ -97,7 +108,19 @@ class TimeManager:
     Hỗ trợ Soft Limit, Hard Limit và Dự đoán tăng trưởng thời gian lặp sâu (Branching Factor Prediction).
     """
 
+    __slots__ = ("soft_ms", "hard_ms", "_start_time", "_deadline", "last_iteration_ms")
+
     def __init__(self, budget: TimeBudget | int) -> None:
+        """
+        Mục đích:
+            Khởi tạo bộ quản lý thời gian với ngân sách xác định.
+
+        Tham số:
+            budget: Đối tượng TimeBudget hoặc một số nguyên biểu thị mili-giây.
+
+        Trả về:
+            None.
+        """
         if isinstance(budget, TimeBudget):
             self.soft_ms: int = budget.soft_ms
             self.hard_ms: int = budget.hard_ms
@@ -110,30 +133,66 @@ class TimeManager:
         self.last_iteration_ms: int = 0
 
     def start(self) -> None:
-        """Bắt đầu tính giờ và xác lập deadline cứng."""
+        """
+        Mục đích:
+            Bắt đầu tính giờ và xác lập deadline cứng sử dụng time.perf_counter().
+
+        Tham số:
+            None.
+
+        Trả về:
+            None.
+        """
         self._start_time = time.perf_counter()
         self._deadline = self._start_time + self.hard_ms / 1000.0
 
     def should_stop(self) -> bool:
-        """Kiểm tra Hard Limit (hết giờ tuyệt đối)."""
+        """
+        Mục đích:
+            Kiểm tra xem đã vượt quá Hard Limit (hạn chót tuyệt đối) hay chưa.
+
+        Tham số:
+            None.
+
+        Trả về:
+            bool: True nếu đã hết thời gian, False nếu vẫn còn thời gian.
+        """
         return time.perf_counter() >= self._deadline
 
     def elapsed_ms(self) -> int:
-        """Số mili-giây đã trôi qua kể từ khi start()."""
+        """
+        Mục đích:
+            Tính số mili-giây đã trôi qua kể từ khi gọi hàm start().
+
+        Tham số:
+            None.
+
+        Trả về:
+            int: Thời gian đã trôi qua (ms).
+        """
+        if self._start_time == 0.0:
+            return 0
         return int((time.perf_counter() - self._start_time) * 1000)
 
     def can_start_next_depth(self) -> bool:
         """
-        Kiểm tra Soft Limit và Dự đoán tăng trưởng thời gian (Branching Factor Prediction).
-        Nếu thời gian đã trôi qua cộng với thời gian ước lượng cho tầng kế tiếp (x2.8)
-        vượt quá Hard Limit, dừng ngay ở độ sâu hiện tại để bảo toàn thành quả.
+        Mục đích:
+            Kiểm tra Soft Limit và Dự đoán tăng trưởng thời gian (Branching Factor Prediction).
+            Nếu thời gian đã trôi qua cộng với thời gian ước lượng cho tầng kế tiếp (x2.2)
+            vượt quá Hard Limit, dừng ngay ở độ sâu hiện tại để bảo toàn thành quả.
+
+        Tham số:
+            None.
+
+        Trả về:
+            bool: True nếu an toàn để bắt đầu tầng độ sâu mới, False nếu nên dừng lại.
         """
         elapsed = self.elapsed_ms()
         if elapsed >= self.soft_ms:
             return False
 
         if self.last_iteration_ms > 0:
-            predicted_ms = int(self.last_iteration_ms * 1.8)
+            predicted_ms = int(self.last_iteration_ms * 2.2)
             if elapsed + predicted_ms >= self.hard_ms:
                 return False
 
