@@ -536,6 +536,15 @@ def evaluate(board: chess.Board) -> int:
             if not (full_w & (1 << (wk & 7))):
                 w_ks_pen += 45
 
+            # Phạt nặng Vua kẹt ở trung tâm (cột d, e) khi cột trung tâm mở toang
+            if wk in (chess.D1, chess.E1, chess.D2, chess.E2):
+                if not (pawns & chess.BB_FILE_D):
+                    w_ks_pen += 80
+                if not (pawns & chess.BB_FILE_E):
+                    w_ks_pen += 90
+                if not (board.castling_rights & chess.BB_RANK_1):
+                    w_ks_pen += 60
+
             wk_f, wk_r = wk & 7, wk >> 3
 
             # Cột biên mở khi Vua nhập thành dài/ngắn trong Chess960 (Triệt tiêu bẫy Match 27)
@@ -587,6 +596,15 @@ def evaluate(board: chess.Board) -> int:
 
             if not (full_b & (1 << (bk & 7))):
                 b_ks_pen += 45
+
+            # Phạt nặng Vua kẹt ở trung tâm (cột d, e) khi cột trung tâm mở toang (đối xứng tuyệt đối)
+            if bk in (chess.D8, chess.E8, chess.D7, chess.E7):
+                if not (pawns & chess.BB_FILE_D):
+                    b_ks_pen += 80
+                if not (pawns & chess.BB_FILE_E):
+                    b_ks_pen += 90
+                if not (board.castling_rights & chess.BB_RANK_8):
+                    b_ks_pen += 60
 
             bk_f, bk_r = bk & 7, bk >> 3
 

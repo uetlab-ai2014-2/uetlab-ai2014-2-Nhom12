@@ -437,9 +437,14 @@ class Searcher:
             if move == killers[1]:
                 return 800_000
 
-            # 5. Nước đi gây chiếu (Check Move): Nước yên lặng tạo đòn chiếu hiểm hóc
+            # 5. Nước đi gây chiếu (Check Move): Nước tạo đòn chiếu an toàn
             if board.gives_check(move):
-                return 650_000
+                opp = not turn
+                if not board.is_attacked_by(opp, move.to_square) or (board.is_capture(move) and see(board, move) >= 0):
+                    return 650_000
+                else:
+                    # Chiếu tự sát (như Ng1+ trong Match 46): Phạt điểm nặng, đẩy xuống đáy!
+                    return -500_000
 
             # 6. Các nước phong cấp khác (Mã, Tượng, Xe)
             if move.promotion is not None:
@@ -530,17 +535,25 @@ class Searcher:
                 return -(MATE_SCORE - ply)
         else:
             # Không bị chiếu: sinh thẳng các nước bắt quân qua generate_legal_captures()
-            # Giữ lại các nước bắt quân có lợi (SEE >= 0) hoặc nước bắt quân gây chiếu (để không bỏ sót đòn sát thủ)
+            # Giữ lại các nước bắt quân có lợi (SEE >= 0) hoặc nước bắt quân gây chiếu an toàn
+            opp = not board.turn
+            def _valid_q_move(m: chess.Move) -> bool:
+                if see(board, m) >= 0:
+                    return True
+                if board.gives_check(m) and not board.is_attacked_by(opp, m.to_square):
+                    return True
+                return False
+
             promo_rank = chess.BB_RANK_7 if board.turn == chess.WHITE else chess.BB_RANK_2
             my_pawns = board.pawns & board.occupied_co[board.turn]
             if my_pawns & promo_rank:
                 caps = list(board.generate_legal_captures())
-                moves = [m for m in caps if see(board, m) >= 0 or board.gives_check(m)]
+                moves = [m for m in caps if _valid_q_move(m)]
                 for m in board.legal_moves:
                     if m.promotion == chess.QUEEN and not board.is_capture(m):
                         moves.append(m)
             else:
-                moves = [m for m in board.generate_legal_captures() if see(board, m) >= 0 or board.gives_check(m)]
+                moves = [m for m in board.generate_legal_captures() if _valid_q_move(m)]
 
         if not moves:
             return alpha
@@ -838,7 +851,12 @@ class Searcher:
         if len(legal) == 1:
             return legal[0]
 
-        best_move = legal[0]
+        # Sắp xếp sơ bộ các nước đi theo TT move / MVV-LVA / vị trí để nước đi mặc định
+        # luôn có phẩm chất cao nhất, triệt tiêu hoàn toàn rủi ro fallback vào nước đi ngẫu nhiên
+        tt_entry = self.tt.probe(board._transposition_key())
+        root_tt_move = tt_entry.best_move if tt_entry is not None else None
+        ordered_legal = self._order_moves(board, legal, ply=0, tt_move=root_tt_move)
+        best_move = ordered_legal[0]
         self._timeout = False
         self._nodes = 0
         self._age += 1
@@ -850,14 +868,14 @@ class Searcher:
         aspiration_delta = 40
 
         for depth in range(1, MAX_DEPTH + 1):
-            if tm.should_stop():
+            if depth > 1 and tm.should_stop():
                 break
 
             # Kiểm tra ngân sách trước khi bước vào cảnh giới / tầng độ sâu mới
             if depth > 1 and not tm.can_start_next_depth():
                 break
 
-            depth_start_time = time.monotonic()
+            depth_start_time = time.perf_counter()
             self._timeout = False
             candidate: chess.Move | None = None
             best_score_this_depth = -MATE_SCORE - 1
@@ -927,11 +945,11 @@ class Searcher:
 
                 break
 
-            # Chỉ cập nhật best_move khi tầng độ sâu này đã hoàn thành trọn vẹn (không bị timeout)
-            if not self._timeout and candidate is not None:
+            # Cập nhật best_move khi tầng hoàn thành trọn vẹn (hoặc ở depth 1 nếu đã có candidate)
+            if candidate is not None and (not self._timeout or depth == 1):
                 best_move = candidate
                 prev_score = best_score_this_depth
-                tm.last_iteration_ms = int((time.monotonic() - depth_start_time) * 1000)
+                tm.last_iteration_ms = int((time.perf_counter() - depth_start_time) * 1000)
 
                 self.tt.store(
                     board._transposition_key(),

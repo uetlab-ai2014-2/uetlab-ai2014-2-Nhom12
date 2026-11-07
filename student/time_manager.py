@@ -66,19 +66,18 @@ def compute_budget_ms(
     moves_played = ply // 2
 
     if is_blitz:
-        # Trong Blitz 45s: Sau nước 40 hoặc khi quỹ thời gian dưới 8s,
-        # mỗi nước đi ĐỀU PHẢI ĐÁNH TRONG <= 10ms để toàn bộ thời gian còn lại
-        # gánh trễ trọng tài GameController, triệt tiêu 100% rủi ro rụng kim!
-        if moves_played >= 40 or safe_remaining <= 8_000:
-            return TimeBudget(soft_ms=5, hard_ms=10)
-        elif safe_remaining <= 15_000:
-            return TimeBudget(soft_ms=25, hard_ms=40)
-        elif moves_played >= 32:
-            return TimeBudget(soft_ms=60, hard_ms=100)
+        # Trong Blitz 45s:
+        # Độ trễ GameController là [500ms, 1000ms], do đó bất kỳ nước đi nào có thời gian <= 400ms
+        # đều được hấp thụ 100% bởi độ trễ trọng tài, KHÔNG làm tiêu hao thêm thời gian đồng hồ.
+        # Đảm bảo ngân sách tối thiểu (hard_ms >= 80ms) để Depth 1 và Depth 2 luôn hoàn tất trọn vẹn.
+        if safe_remaining <= 5_000:
+            return TimeBudget(soft_ms=40, hard_ms=80)
+        elif safe_remaining <= 10_000:
+            return TimeBudget(soft_ms=80, hard_ms=150)
+        elif safe_remaining <= 20_000:
+            return TimeBudget(soft_ms=140, hard_ms=220)
         else:
-            # Giai đoạn khai cuộc & trung cuộc (nước 1 - 31):
-            # Tận dụng khung trễ 500ms để tìm kiếm sâu mà không tiêu hao clock
-            return TimeBudget(soft_ms=150, hard_ms=220)
+            return TimeBudget(soft_ms=220, hard_ms=350)
     else:
         # Thể thức Standard (180s - 360s thi đấu chính thức):
         if safe_remaining <= 8_000:
@@ -112,16 +111,16 @@ class TimeManager:
 
     def start(self) -> None:
         """Bắt đầu tính giờ và xác lập deadline cứng."""
-        self._start_time = time.monotonic()
+        self._start_time = time.perf_counter()
         self._deadline = self._start_time + self.hard_ms / 1000.0
 
     def should_stop(self) -> bool:
         """Kiểm tra Hard Limit (hết giờ tuyệt đối)."""
-        return time.monotonic() >= self._deadline
+        return time.perf_counter() >= self._deadline
 
     def elapsed_ms(self) -> int:
         """Số mili-giây đã trôi qua kể từ khi start()."""
-        return int((time.monotonic() - self._start_time) * 1000)
+        return int((time.perf_counter() - self._start_time) * 1000)
 
     def can_start_next_depth(self) -> bool:
         """
@@ -134,7 +133,7 @@ class TimeManager:
             return False
 
         if self.last_iteration_ms > 0:
-            predicted_ms = int(self.last_iteration_ms * 2.8)
+            predicted_ms = int(self.last_iteration_ms * 1.8)
             if elapsed + predicted_ms >= self.hard_ms:
                 return False
 
