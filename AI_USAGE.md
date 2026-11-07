@@ -141,17 +141,16 @@ Kết quả kiểm tra cú pháp đạt; các bài kiểm thử tích hợp vẫ
 #### 4.2. Công cụ AI sử dụng
 | Công cụ AI | Mục đích sử dụng |
 |---|---|
-| **Gemini** | Hỗ trợ phân tích lỗi kỹ thuật, giải thích nguyên lý quản lý thời gian tìm kiếm và gợi ý hướng xử lý một số tình huống ngoại lệ trong quá trình phát triển bot., thiết kế cơ chế bù độ trễ thời gian ChessLab và hỗ trợ chuẩn hóa tài liệu |
-| **Gemini** | Trao đổi về nguyên nhân lỗi, cách kiểm tra phương thức của thư viện python-chess và rà soát nội dung tài liệu kỹ thuật.|
+| **Gemini / Google Antigravity** | Hỗ trợ phân tích lỗi kỹ thuật, giải thích nguyên lý quản lý thời gian tìm kiếm, thiết kế cơ chế bù trừ độ trễ hệ thống GameController, rà soát logic bitboard phong cấp trong Quiescence Search và chuẩn hóa tài liệu báo cáo. |
+| **Gemini / Google Antigravity** | Hỗ trợ phân tích thuật toán dọn tàn cuộc Mop-Up Heuristic (ép Vua đối phương vào góc khi áp đảo vật chất), tối ưu sắp xếp nước chiếu hiểm hóc và xây dựng bộ kiểm thử 12 thế cờ chiến thuật. |
 
 #### 4.3. Nội dung AI hỗ trợ
 | Nhóm công việc | Nội dung AI hỗ trợ | Cách thành viên sử dụng kết quả |
-|---|---|---|---|
-| **Phân tích lỗi kỹ thuật** | Hỗ trợ giải thích nguyên nhân có thể dẫn đến lỗi `AttributeError: 'Board' object has no attribute 'zobrist_hash'`, đồng thời gợi ý kiểm tra lại phương thức truy xuất trạng thái bàn cờ. | Tự chạy chương trình, đọc traceback, đối chiếu tài liệu thư viện `python-chess`, lựa chọn phương án thay thế và chỉnh sửa mã nguồn. |
-| **Tham khảo quản lý thời gian** | Giải thích nguyên tắc phân bổ ngân sách thời gian trong Iterative Deepening, gợi ý cân nhắc ngưỡng dừng tìm kiếm khi thời gian còn lại thấp. | Tự xây dựng công thức `compute_budget_ms()`, lựa chọn các ngưỡng thời gian, hiện thực `TimeManager` và kiểm tra hoạt động thực tế. |
-| **Rà soát độ ổn định hệ thống** | Gợi ý một số trường hợp cần xử lý như không có nước đi hợp lệ, lỗi trong quá trình tìm kiếm và nước đi trả về không hợp lệ. | Tự thiết kế và lập trình các nhánh xử lý trong `choose_move()`, đảm bảo bot luôn có phương án trả về an toàn. |
-| **Hỗ trợ tài liệu** | Gợi ý cách diễn đạt, bố cục và phân định trách nhiệm giữa AI với thành viên. | Tự đối chiếu nội dung với mã nguồn, kế hoạch phân công và hoàn thiện tài liệu cuối cùng. |
-
+|---|---|---|
+| **Phân tích lỗi kỹ thuật & Bitboard** | Hỗ trợ phân tích lỗi bitboard has_promotion kiểm tra nhầm tốt cả hai bên trong Quiescence Search làm tê liệt Delta Pruning; giải thích nguyên nhân lỗi AttributeError: 'Board' object has no attribute 'zobrist_hash' và thay bằng oard._transposition_key(). | Tự chạy chương trình, đọc mã nguồn, đối chiếu tài liệu python-chess, sửa đổi bitboard kiểm tra tốt theo lượt đi thực tế (oard.pawns & board.occupied_co[board.turn]) và kiểm chứng tính đúng đắn. |
+| **Hiệu chuẩn quản lý thời gian** | Phân tích cơ chế cộng dồn độ trễ 500ms - 1000ms của GameController, hướng dẫn cân bằng ngân sách tìm kiếm theo từng giai đoạn và thiết lập sàn khẩn cấp 20ms cho Panic Mode. | Tự xây dựng công thức compute_budget_ms(), điều chỉnh hệ số mở tầng can_start_next_depth(), bảo lưu quỹ trễ và kiểm thử đối kháng chống rụng kim trong các ván đấu 200+ ply. |
+| **Nâng cấp chiến thuật & Tàn cuộc** | Hướng dẫn thuật toán Mop-Up Heuristic bảo toàn tính đối xứng gương .mirror() và sắp xếp nước chiếu gives_check (+600k điểm). | Tự tích hợp vào student/evaluation.py và student/search.py, kiểm chứng qua bộ 12 FEN chiến thuật đạt 100% độ chính xác. |
+| **Hỗ trợ tài liệu** | Gợi ý cách diễn đạt, cấu trúc hóa báo cáo và minh bạch hóa trách nhiệm. | Tự đối chiếu nội dung với mã nguồn, kiểm tra Git an toàn và hoàn thiện hồ sơ dự án. |
 #### 4.4. Ví dụ tương tác AI tiêu biểu
 - **Vấn đề kỹ thuật:** Tại sao bot cờ vua luôn thực hiện nước đi `g1h3` trong thời gian 0.000s mặc dù đã được viết đầy đủ?
 - **Yêu cầu đặt ra cho AI:** *"Hãy phân tích nguyên nhân có thể dẫn đến lỗi `AttributeError` khi sử dụng phương thức `zobrist_hash()` trong thư viện `python-chess`. Giải thích cách kiểm tra và đề xuất hướng khắc phục. Không viết lại toàn bộ module tìm kiếm, chỉ tập trung giải thích nguyên nhân và hướng xử lý."*

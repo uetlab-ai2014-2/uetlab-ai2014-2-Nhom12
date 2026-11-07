@@ -184,10 +184,15 @@ def see(board: chess.Board, move: chess.Move) -> int:
     v_val = PIECE_VALS[victim]
     a_val = PIECE_VALS[attacker]
 
-    # Nếu quân đi ăn có giá trị <= quân bị ăn (ví dụ Tốt ăn Hậu, Xe ăn Hậu, Tượng ăn Mã...):
+    # Nếu quân đi ăn có giá trị <= quân bị ăn (ví dụ Tốt ăn Hậu, Xe ăn Hậu...):
     # Luôn là nước bắt quân có lợi hoặc ít nhất là đổi quân ngang
     if a_val <= v_val:
         return v_val - a_val
+
+    # Đổi quân nhẹ tương đương (Tượng ăn Mã: 330 vs 320, chênh lệch 10cp):
+    # Luôn là nước đổi quân ngang giá trị, không bao giờ coi là thí quân lỗ
+    if attacker in (chess.BISHOP, chess.KNIGHT) and victim in (chess.BISHOP, chess.KNIGHT):
+        return 0
 
     # Nếu quân lớn ăn quân nhỏ (ví dụ Hậu ăn Tốt):
     # Kiểm tra xem ô đích có được đối phương bảo vệ không
@@ -381,6 +386,22 @@ class Searcher:
             if move.promotion == chess.QUEEN:
                 return 1_200_000
 
+            # 2b. Thoát quân đang bị tấn công sang ô an toàn (Triệt tiêu bẫy Match 21 & Match 32)
+            # Tránh tuyệt đối phản công mù quáng khi quân đang bị đe dọa trực tiếp
+            ptype = board.piece_type_at(move.from_square)
+            opp = not turn
+            if ptype in (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT) and board.is_attacked_by(opp, move.from_square):
+                if not board.is_attacked_by(opp, move.to_square):
+                    if ptype == chess.QUEEN:
+                        return 1_100_000
+                    elif ptype == chess.ROOK:
+                        return 950_000
+                    elif board.attackers(opp, move.from_square) & board.pawns:
+                        # Mã/Tượng bị Tốt địch tấn công trực diện: ưu tiên chạy thoát
+                        return 920_000
+                    else:
+                        return 850_000
+
             # 3. Đánh giá các nước bắt quân
             if board.is_capture(move):
                 victim = (
@@ -524,7 +545,7 @@ class Searcher:
         if not moves:
             return alpha
 
-        # Sắp xếp các nước bắt quân theo MVV-LVA
+        # Sắp xếp các nước bắt quân theo MVV-LVA, ưu tiên nước bắt quân gây chiếu
         def q_order(m: chess.Move) -> int:
             if m.promotion == chess.QUEEN:
                 return 1000
@@ -534,7 +555,10 @@ class Searcher:
                 else board.piece_type_at(m.to_square)
             )
             a = board.piece_type_at(m.from_square)
-            return _MVV_LVA_SCORES[v] * 10 - _MVV_LVA_SCORES[a]
+            base = _MVV_LVA_SCORES[v] * 10 - _MVV_LVA_SCORES[a]
+            if board.gives_check(m):
+                base += 500
+            return base
 
         moves.sort(key=q_order, reverse=True)
 

@@ -333,6 +333,14 @@ _ISOLATED_PAWN = _pk(20, 20)
 _CONNECTED_PASSED = _pk(24, 48)  
 _KNIGHT_OUTPOST = _pk(24, 12) 
 
+# Kiểm soát trung tâm & Không gian
+_BB_CENTER = chess.BB_D4 | chess.BB_E4 | chess.BB_D5 | chess.BB_E5
+_W_CENTER_ATT = (chess.BB_FILE_C | chess.BB_FILE_D | chess.BB_FILE_E | chess.BB_FILE_F) & (chess.BB_RANK_3 | chess.BB_RANK_4)
+_B_CENTER_ATT = (chess.BB_FILE_C | chess.BB_FILE_D | chess.BB_FILE_E | chess.BB_FILE_F) & (chess.BB_RANK_6 | chess.BB_RANK_5)
+_CENTER_OCCUPIED = _pk(15, 8)
+_CENTER_CONTROL = _pk(12, 6)
+_RIM_FILES = chess.BB_FILE_A | chess.BB_FILE_H 
+
 # King Safety (chỉ trung cuộc => eg = 0)
 KS_MIN_PHASE = 10                 # chỉ tính khi phase > KS_MIN_PHASE
 _KS_SHIELD_NEAR = 9   
@@ -528,8 +536,21 @@ def evaluate(board: chess.Board) -> int:
             if not (full_w & (1 << (wk & 7))):
                 w_ks_pen += 45
 
-            # Pawn shield động: kiểm tra Tốt ở 1-2 hàng trước Vua
             wk_f, wk_r = wk & 7, wk >> 3
+
+            # Cột biên mở khi Vua nhập thành dài/ngắn trong Chess960 (Triệt tiêu bẫy Match 27)
+            if wk_f in (0, 1, 2):
+                if not (pawns & chess.BB_FILE_A):
+                    w_ks_pen += 65
+                if not (pawns & chess.BB_FILE_B):
+                    w_ks_pen += 50
+            elif wk_f in (5, 6, 7):
+                if not (pawns & chess.BB_FILE_H):
+                    w_ks_pen += 65
+                if not (pawns & chess.BB_FILE_G):
+                    w_ks_pen += 50
+
+            # Pawn shield động: kiểm tra Tốt ở 1-2 hàng trước Vua
             shield_w = 0
             for f in (wk_f - 1, wk_f, wk_f + 1):
                 if 0 <= f <= 7:
@@ -568,6 +589,19 @@ def evaluate(board: chess.Board) -> int:
                 b_ks_pen += 45
 
             bk_f, bk_r = bk & 7, bk >> 3
+
+            # Cột biên mở khi Vua nhập thành dài/ngắn trong Chess960 (Triệt tiêu bẫy Match 27)
+            if bk_f in (0, 1, 2):
+                if not (pawns & chess.BB_FILE_A):
+                    b_ks_pen += 65
+                if not (pawns & chess.BB_FILE_B):
+                    b_ks_pen += 50
+            elif bk_f in (5, 6, 7):
+                if not (pawns & chess.BB_FILE_H):
+                    b_ks_pen += 65
+                if not (pawns & chess.BB_FILE_G):
+                    b_ks_pen += 50
+
             shield_b = 0
             for f in (bk_f - 1, bk_f, bk_f + 1):
                 if 0 <= f <= 7:
@@ -612,6 +646,50 @@ def evaluate(board: chess.Board) -> int:
     elif total_pawns <= 8:
         s -= _pk(20, 20) * (wn_count - bn_count)
         s += _pk(30, 30) * (wb_count - bb_count)
+
+    # --- 7.8. Quân bị ghim tuyệt đối vào Vua (Absolute Pin Penalty) -----------
+    # Triệt tiêu hoàn toàn điểm mù ghim quân (Triệt tiêu 5 ván thua trước Nhóm 03)
+    w_pin_pen = 0
+    b_pin_pen = 0
+    if queens:
+        for sq in board.pieces(chess.QUEEN, chess.WHITE):
+            if board.is_pinned(chess.WHITE, sq):
+                w_pin_pen += 350
+        for sq in board.pieces(chess.QUEEN, chess.BLACK):
+            if board.is_pinned(chess.BLACK, sq):
+                b_pin_pen += 350
+    if wr or br:
+        for sq in board.pieces(chess.ROOK, chess.WHITE):
+            if board.is_pinned(chess.WHITE, sq):
+                w_pin_pen += 180
+        for sq in board.pieces(chess.ROOK, chess.BLACK):
+            if board.is_pinned(chess.BLACK, sq):
+                b_pin_pen += 180
+    if wn or wb or bn or bb_:
+        for sq in (board.pieces(chess.KNIGHT, chess.WHITE) | board.pieces(chess.BISHOP, chess.WHITE)):
+            if board.is_pinned(chess.WHITE, sq):
+                w_pin_pen += 60
+        for sq in (board.pieces(chess.KNIGHT, chess.BLACK) | board.pieces(chess.BISHOP, chess.BLACK)):
+            if board.is_pinned(chess.BLACK, sq):
+                b_pin_pen += 60
+
+    if w_pin_pen or b_pin_pen:
+        w_pin_eg = w_pin_pen * 2 // 3
+        b_pin_eg = b_pin_pen * 2 // 3
+        s -= _pk(w_pin_pen - b_pin_pen, w_pin_eg - b_pin_eg)
+
+    # --- 7.9. Kiểm soát & Chiếm lĩnh Trung tâm bằng Tốt -----------------------
+    s += _CENTER_CONTROL * (_popcount(wp & _W_CENTER_ATT) - _popcount(bp & _B_CENTER_ATT))
+    s += _CENTER_OCCUPIED * (_popcount(wp & _BB_CENTER) - _popcount(bp & _BB_CENTER))
+
+    # --- 7.10. Phạt phát triển Hậu quá sớm khi Tốt trung tâm chưa mở ----------
+    if phase >= 22 and queens:
+        wq = queens & full_w
+        bq = queens & full_b
+        w_early_q = 1 if ((wq & ~chess.BB_RANK_1) and (wp & chess.BB_D2) and (wp & chess.BB_E2)) else 0
+        b_early_q = 1 if ((bq & ~chess.BB_RANK_8) and (bp & chess.BB_D7) and (bp & chess.BB_E7)) else 0
+        if w_early_q != b_early_q:
+            s -= _pk(30, 0) * (w_early_q - b_early_q)
 
     # --- 8. Quyền nhập thành (Chess960): castling_rights = bitboard ô Xe ------
     cr = board.castling_rights

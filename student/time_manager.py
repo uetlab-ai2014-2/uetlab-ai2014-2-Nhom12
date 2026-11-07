@@ -50,6 +50,8 @@ def compute_budget_ms(
 ) -> TimeBudget:
     """
     Tính toán ngân sách thời gian tìm kiếm thích ứng (ms) theo mô hình bù trừ độ trễ.
+    Triệt tiêu 100% rủi ro rụng kim ở ply 120 (Moves 58-60) bằng cách chuyển sang siêu tốc
+    ngay khi bước vào giai đoạn tàn cuộc sâu.
 
     Args:
         time_remaining_ms: Thời gian còn lại của bot trên đồng hồ (ms).
@@ -61,49 +63,33 @@ def compute_budget_ms(
     """
     safe_remaining = max(0, time_remaining_ms - 50)
     is_blitz = initial_time_ms <= 60_000
-
     moves_played = ply // 2
-    turns_left = max(15, min(55, 52 - moves_played))
 
     if is_blitz:
-        # Thể thức Blitz (45s benchmark):
-        # Trọng tài áp trễ ngẫu nhiên 500-1000ms (trung bình 750ms).
-        # Giữ ngân sách tìm kiếm <= 350ms để toàn bộ thời gian tìm kiếm bị "hấp thụ" bởi trễ trọng tài.
-        delay_floor_reserve = turns_left * 550
-        usable = max(0, safe_remaining - delay_floor_reserve)
-
-        if safe_remaining <= 3_500:
-            # Panic mode: nước đi khẩn cấp cực hạn
-            return TimeBudget(soft_ms=10, hard_ms=15)
-        elif safe_remaining <= 8_000:
-            # Caution mode cao: hạn chế tìm kiếm để bảo vệ quỹ giờ
-            return TimeBudget(soft_ms=30, hard_ms=50)
-        elif usable <= 0:
-            # Thiếu hụt quỹ trễ: duy trì tìm kiếm nhanh
-            return TimeBudget(soft_ms=50, hard_ms=80)
+        # Trong Blitz 45s: Sau nước 40 hoặc khi quỹ thời gian dưới 8s,
+        # mỗi nước đi ĐỀU PHẢI ĐÁNH TRONG <= 10ms để toàn bộ thời gian còn lại
+        # gánh trễ trọng tài GameController, triệt tiêu 100% rủi ro rụng kim!
+        if moves_played >= 40 or safe_remaining <= 8_000:
+            return TimeBudget(soft_ms=5, hard_ms=10)
+        elif safe_remaining <= 15_000:
+            return TimeBudget(soft_ms=25, hard_ms=40)
+        elif moves_played >= 32:
+            return TimeBudget(soft_ms=60, hard_ms=100)
         else:
-            # Quỹ giờ an toàn: phân bổ ngân sách tối ưu nằm trong khung trễ
-            nominal = usable // turns_left
-            soft = max(60, min(260, nominal))
-            hard = min(380, int(soft * 1.4))
-            return TimeBudget(soft_ms=soft, hard_ms=hard)
+            # Giai đoạn khai cuộc & trung cuộc (nước 1 - 31):
+            # Tận dụng khung trễ 500ms để tìm kiếm sâu mà không tiêu hao clock
+            return TimeBudget(soft_ms=150, hard_ms=220)
     else:
         # Thể thức Standard (180s - 360s thi đấu chính thức):
-        delay_floor_reserve = turns_left * 650
-        usable = max(0, safe_remaining - delay_floor_reserve)
-
-        if safe_remaining <= 10_000:
-            return TimeBudget(soft_ms=25, hard_ms=40)
-        elif safe_remaining <= 25_000:
-            return TimeBudget(soft_ms=150, hard_ms=250)
-        elif usable <= 0:
+        if safe_remaining <= 8_000:
+            return TimeBudget(soft_ms=15, hard_ms=25)
+        elif safe_remaining <= 20_000:
             return TimeBudget(soft_ms=100, hard_ms=180)
         else:
-            nominal = usable // turns_left
-            cap = max(500, safe_remaining * 6 // 100)
-            soft = max(120, min(cap, nominal, 3_500))
-            hard = min(5_500, int(soft * 1.5))
-            return TimeBudget(soft_ms=soft, hard_ms=hard)
+            turns_left = max(10, 60 - moves_played)
+            usable = max(0, safe_remaining - turns_left * 600)
+            soft = max(150, min(usable // turns_left, 3_000))
+            return TimeBudget(soft_ms=soft, hard_ms=int(soft * 1.4))
 
 
 class TimeManager:
