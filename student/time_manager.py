@@ -23,10 +23,10 @@ import time
 # ---------------------------------------------------------------------------
 
 # Dự phòng an toàn (Safety buffer): trừ hao độ trễ overhead gọi hàm và trả kết quả
-_OVERHEAT_MS = 60
+_OVERHEAT_MS = 150
 
-# Ngưỡng thời gian nguy cấp (Critical threshold): dưới 8 giây còn lại
-_CRITICAL_MS = 8_000
+# Ngưỡng thời gian nguy cấp (Critical threshold): dưới 7 giây còn lại
+_CRITICAL_MS = 7_000
 
 # Ngưỡng hoảng loạn (Panic threshold): dưới 3.5 giây còn lại
 # Với độ trễ 500ms-1000ms của hệ thống, 3.5s chỉ còn đủ cho khoảng 3-4 nước đi
@@ -46,17 +46,17 @@ def compute_budget_ms(
 
     Thuật toán phân bổ thời gian thích ứng (Adaptive Time Allocation):
     1. Trừ hao an toàn (_OVERHEAT_MS) để tính thời gian khả dụng thực tế.
-    2. Chế độ Hoảng loạn (Panic Mode - dưới 3.5s): Ép ngân sách xuống 35ms,
+    2. Chế độ Hoảng loạn (Panic Mode - dưới 3.5s): Ép ngân sách xuống 20ms,
        nhường toàn bộ thời gian cho độ trễ 500-1000ms của hệ thống, chống rụng kim.
-    3. Chế độ Nguy cấp (Critical Mode - dưới 8s): Thu hẹp ngân sách trong khoảng 40ms - 100ms.
+    3. Chế độ Nguy cấp (Critical Mode - dưới 7s): Thu hẹp ngân sách trong khoảng 40ms - 80ms.
     4. Ước tính số nước đi còn lại (moves_left) theo số ply đã qua:
-       - Khai cuộc (< 10 nước): 35 nước.
+       - Khai cuộc (< 10 nước): 35 nước (đảm bảo độ sâu tối đa ngay từ đầu).
        - Trung cuộc sớm (< 30 nước): 30 nước.
        - Trung cuộc muộn (< 50 nước): 25 nước.
        - Tàn cuộc (>= 50 nước): 20 nước.
     5. Khấu trừ độ trễ hệ thống: time_per_move = safe_remaining // moves_left,
        budget = time_per_move - _AVG_SYSTEM_DELAY_MS. Đảm bảo bot sống sót đủ moves_left nước.
-    6. Áp trần ngân sách không vượt quá 8% quỹ thời gian còn lại và sàn tối thiểu 50ms.
+    6. Áp trần ngân sách không vượt quá 8% quỹ thời gian còn lại và sàn tối thiểu 60ms.
 
     Args:
         time_remaining_ms: Tổng thời gian thi đấu còn lại của bot (ms).
@@ -69,13 +69,13 @@ def compute_budget_ms(
     safe_remaining = max(0, time_remaining_ms - _OVERHEAT_MS)
 
     # 1. Chế độ Hoảng loạn (Panic Mode): còn dưới 3.5s
-    # Phải đi cực nhanh (35ms) để nhường toàn bộ thời gian cho độ trễ của hệ thống
+    # Phải đi cực nhanh (20ms) để nhường toàn bộ thời gian cho độ trễ của hệ thống
     if safe_remaining < _PANIC_MS:
-        return 35
+        return 20
 
-    # 2. Chế độ Nguy cấp (Critical Mode): còn dưới 8s
+    # 2. Chế độ Nguy cấp (Critical Mode): còn dưới 7s
     if safe_remaining < _CRITICAL_MS:
-        return max(40, min(100, safe_remaining // 25))
+        return max(40, min(80, safe_remaining // 30))
 
     # 3. Ước tính số nước đi còn lại theo tiến độ thực tế của ván cờ
     moves_played = ply // 2
@@ -98,8 +98,8 @@ def compute_budget_ms(
     max_allowed = max(80, safe_remaining * 8 // 100)
     budget = min(budget, max_allowed)
 
-    # Đảm bảo ngân sách sàn tối thiểu từ 50ms trở lên
-    return max(budget, 50)
+    # Đảm bảo ngân sách sàn tối thiểu từ 60ms trở lên
+    return max(budget, 60)
 
 
 class TimeManager:

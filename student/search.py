@@ -415,11 +415,15 @@ class Searcher:
             if move == killers[1]:
                 return 650_000
 
-            # 5. Các nước phong cấp khác (Mã, Tượng, Xe)
+            # 5. Nước đi gây chiếu (Check Move): Nước yên lặng tạo đòn chiếu hiểm hóc
+            if board.gives_check(move):
+                return 600_000
+
+            # 6. Các nước phong cấp khác (Mã, Tượng, Xe)
             if move.promotion is not None:
                 return 40_000
 
-            # 6. History Heuristic: sắp xếp các nước yên lặng theo tần suất thành công
+            # 7. History Heuristic: sắp xếp các nước yên lặng theo tần suất thành công
             key = (turn, move.from_square, move.to_square)
             return min(self.history.get(key, 0), 500_000)
 
@@ -480,9 +484,10 @@ class Searcher:
             if stand_pat >= beta:
                 return beta
 
-            # Kiểm tra phong cấp siêu nhanh bằng Bitboard: chỉ có thể phong cấp nếu có Tốt ở hàng 7 (Trắng) hoặc hàng 2 (Đen)
+            # Kiểm tra phong cấp siêu nhanh bằng Bitboard: chỉ xét Tốt của bên đang đến lượt đi
             promo_rank = chess.BB_RANK_7 if board.turn == chess.WHITE else chess.BB_RANK_2
-            has_promotion = bool(board.pawns & promo_rank)
+            my_pawns = board.pawns & board.occupied_co[board.turn]
+            has_promotion = bool(my_pawns & promo_rank)
 
             # Delta Pruning: không cắt tỉa nếu có nguy cơ đối phương hoặc mình phong cấp
             if qdepth > 0 and not has_promotion and stand_pat + 1150 < alpha:
@@ -505,7 +510,8 @@ class Searcher:
             # Không bị chiếu: sinh thẳng các nước bắt quân qua generate_legal_captures()
             # Giữ lại các nước bắt quân có lợi (SEE >= 0) hoặc nước bắt quân gây chiếu (để không bỏ sót đòn sát thủ)
             promo_rank = chess.BB_RANK_7 if board.turn == chess.WHITE else chess.BB_RANK_2
-            if board.pawns & promo_rank:
+            my_pawns = board.pawns & board.occupied_co[board.turn]
+            if my_pawns & promo_rank:
                 caps = list(board.generate_legal_captures())
                 moves = [m for m in caps if see(board, m) >= 0 or board.gives_check(m)]
                 for m in board.legal_moves:

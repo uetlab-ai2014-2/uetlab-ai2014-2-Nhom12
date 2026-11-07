@@ -547,7 +547,22 @@ def evaluate(board: chess.Board) -> int:
     x = mg * phase + eg * (24 - phase)
     score = x // 24 if x >= 0 else -(-x // 24)  # chia cắt về 0 => đối xứng dấu tuyệt đối
 
-    # --- 10. Tempo + đổi dấu theo Negamax -------------------------------------
+    # --- 10. Mop-Up Heuristic (Đòn quét dọn tàn cuộc áp đảo) -----------------
+    # Khi cờ tàn (phase <= 6) và một bên có ưu thế vật chất áp đảo (score >= 200cp),
+    # ép Vua đối phương vào góc/mép bàn cờ và kéo Vua mình lại gần để hỗ trợ chiếu hết.
+    if phase <= 6 and wk >= 0 and bk >= 0:
+        wk_f, wk_r = wk & 7, wk >> 3
+        bk_f, bk_r = bk & 7, bk >> 3
+        if score >= 200:
+            cmd = max(3 - bk_f, bk_f - 4) + max(3 - bk_r, bk_r - 4)
+            dist = abs(wk_f - bk_f) + abs(wk_r - bk_r)
+            score += ((cmd * 10) + (14 - dist) * 4) * (6 - phase) // 6
+        elif score <= -200:
+            cmd = max(3 - wk_f, wk_f - 4) + max(3 - wk_r, wk_r - 4)
+            dist = abs(wk_f - bk_f) + abs(wk_r - bk_r)
+            score -= ((cmd * 10) + (14 - dist) * 4) * (6 - phase) // 6
+
+    # --- 11. Tempo + đổi dấu theo Negamax -------------------------------------
     return score + TEMPO_BONUS if board.turn else TEMPO_BONUS - score
 
 
