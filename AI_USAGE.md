@@ -200,3 +200,14 @@ Nhóm 12 cam kết toàn bộ nội dung khai báo trong tài liệu này là ho
 
 ---
 
+
+## PHẦN III. KHAI BÁO BỔ SUNG TRONG GIAI ĐOẠN ĐÁNH GIÁ THỰC NGHIỆM VÀ TỐI ƯU HÓA CUỐI CÙNG
+
+Trong giai đoạn kiểm thử đối kháng và chuẩn bị nộp bài chính thức, nhóm đã sử dụng trợ lý AI (Google Antigravity / Gemini) nhằm hỗ trợ các nội dung sau:
+1. **Thiết lập công cụ benchmark thực nghiệm độc lập:** Hỗ trợ xây dựng kịch bản kiểm thử không giao diện (headless tournament) song song dựa trên mã nguồn khung của ban tổ chức (`chesslab_sdk`), mô phỏng đúng độ trễ ngẫu nhiên 500–1000ms của GameController để phát hiện nguy cơ quá giờ trong các tình huống thực tế.
+2. **Phân tích nguyên nhân thất bại của bản gốc (Root Cause Analysis):** Hỗ trợ chỉ ra hiện tượng tiêu hao thời gian quá mức ở giai đoạn khai cuộc khi bàn cờ chưa có biến động lớn, cùng với sự xung đột giữa điều kiện kiểm tra phong cấp trong Quiescence Search và độ trễ hệ thống dẫn đến cạn kiệt đồng hồ ở tàn cuộc.
+3. **Đề xuất tinh chỉnh Heuristic và Kiểm soát Thời gian:**
+   - Điều chỉnh công thức phân bổ thời gian động (`compute_budget_ms`), bổ sung quỹ dự trữ độ trễ hệ thống (`moves_left * 550ms`) và cơ chế hạ cánh khẩn cấp (Panic Mode floor) khi đồng hồ còn dưới 3.5s.
+   - Chuẩn hóa điều kiện bắt quân phong cấp trong Quiescence Search theo đúng màu quân đang đi (`board.turn`).
+   - Tăng cường trọng số phạt an toàn Vua khi đứng trên cột mở và bán mở trong `evaluation.py`.
+4. **Cam kết kiểm chứng:** Mọi tinh chỉnh mã nguồn trong `student/` đều được nhóm tự biên dịch, kiểm tra thông qua `pytest` và kiểm chứng đối đầu thực tế 2 lượt đổi màu trước khi chấp nhận vào bản chính thức.
