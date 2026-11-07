@@ -71,12 +71,12 @@ class StudentBot:
             return legal[0]
 
         # TẦNG 2: Thiết lập thời gian và gọi bộ máy tìm kiếm
-        budget_ms = compute_budget_ms(
+        budget = compute_budget_ms(
             time_remaining_ms=context.time_remaining_ms,
             ply=context.ply,
             initial_time_ms=self.config.initial_time_ms,
         )
-        tm = TimeManager(budget_ms)
+        tm = TimeManager(budget)
 
         try:
             move = self.searcher.search(board, tm)

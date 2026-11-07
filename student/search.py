@@ -32,6 +32,7 @@ Kiến trúc thuật toán & Kỹ thuật tối ưu hóa:
 
 from __future__ import annotations
 
+import time
 from typing import Any, NamedTuple
 import chess
 
@@ -44,7 +45,7 @@ from .evaluation import evaluate
 
 # Kích thước bảng băm: 2^18 = 262,144 mục (vừa vặn bộ nhớ RAM, tốc độ tra cứu O(1))
 # Tương ứng "Càn Khôn Giới Chỉ" - lưu trữ trạng thái và ký ức thế cờ
-TT_SIZE = 1 << 18
+TT_SIZE = 1 << 19
 
 # Điểm quy ước chiếu hết (Checkmate score): 30,000 centipawns
 # Tương ứng "Tuyệt Sát Đạo" - cảnh giới đoạt mạng tối cao trong cờ vua
@@ -372,9 +373,9 @@ class Searcher:
         turn = board.turn
 
         def score_move(move: chess.Move) -> int:
-            # 1. Ưu tiên cao nhất: Nước đi gợi ý từ Transposition Table
+            # 1. Ưu tiên cao nhất: Nước đi gợi ý từ Transposition Table (Hash Move)
             if move == tt_move:
-                return 2_000_000
+                return 10_000_000
 
             # 2. Ưu tiên phong cấp Hậu
             if move.promotion == chess.QUEEN:
@@ -411,13 +412,13 @@ class Searcher:
 
             # 4. Killer Moves: các nước đi yên lặng từng gây cắt tỉa beta ở cùng ply
             if move == killers[0]:
-                return 700_000
+                return 900_000
             if move == killers[1]:
-                return 650_000
+                return 800_000
 
             # 5. Nước đi gây chiếu (Check Move): Nước yên lặng tạo đòn chiếu hiểm hóc
             if board.gives_check(move):
-                return 600_000
+                return 650_000
 
             # 6. Các nước phong cấp khác (Mã, Tượng, Xe)
             if move.promotion is not None:
@@ -464,8 +465,8 @@ class Searcher:
         """
         self._nodes += 1
 
-        # Kiểm tra deadline định kỳ mỗi 512 nodes để giảm overhead
-        if (self._nodes & 511) == 0 and tm.should_stop():
+        # Kiểm tra deadline định kỳ mỗi 128 nodes để phản ứng nhanh nhạy với thời gian
+        if (self._nodes & 127) == 0 and tm.should_stop():
             self._timeout = True
             return 0
 
@@ -593,8 +594,8 @@ class Searcher:
         """
         self._nodes += 1
 
-        # Kiểm tra deadline định kỳ mỗi 512 nodes
-        if (self._nodes & 511) == 0 and tm.should_stop():
+        # Kiểm tra deadline định kỳ mỗi 128 nodes để phản ứng nhanh nhạy với thời gian
+        if (self._nodes & 127) == 0 and tm.should_stop():
             self._timeout = True
             return 0
 
@@ -606,6 +607,12 @@ class Searcher:
             if board.is_repetition(2) or board.halfmove_clock >= 100:
                 if board.is_checkmate():
                     return -(MATE_SCORE - ply)
+                # CONTEMPT FACTOR: Khinh địch khi đang hơn thế để ép bot tìm đường thắng
+                eval_side = evaluate(board)
+                if eval_side >= 80:
+                    return -50  # Phạt hòa khi đang hơn thế
+                elif eval_side <= -80:
+                    return +50  # Thưởng hòa khi đang thua
                 return DRAW_SCORE
             if board.is_insufficient_material():
                 return DRAW_SCORE
@@ -631,6 +638,10 @@ class Searcher:
             return self._quiescence(board, alpha, beta, ply, tm, 0)
 
         in_check = board.is_check()
+
+        # Check Extension: Mở rộng 1 tầng khi bị chiếu để triệt tiêu Horizon Effect
+        if in_check and ply < 24:
+            depth += 1
 
         # Tính toán lượng giá tĩnh một lần duy nhất khi không bị chiếu
         # Dùng chung cho RFP, NMP và Futility Pruning để tránh gọi lại evaluate()
@@ -822,6 +833,7 @@ class Searcher:
             if depth > 1 and not tm.can_start_next_depth():
                 break
 
+            depth_start_time = time.monotonic()
             self._timeout = False
             candidate: chess.Move | None = None
             best_score_this_depth = -MATE_SCORE - 1
@@ -895,6 +907,7 @@ class Searcher:
             if not self._timeout and candidate is not None:
                 best_move = candidate
                 prev_score = best_score_this_depth
+                tm.last_iteration_ms = int((time.monotonic() - depth_start_time) * 1000)
 
                 self.tt.store(
                     board._transposition_key(),

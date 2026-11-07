@@ -228,8 +228,8 @@ PST_EG: dict[chess.PieceType, list[int]] = {
 }
 
 # Điểm tốt thông theo rank (index = rank 0..7)
-PASSED_PAWN_BONUS_MG = [0, 5, 10, 20, 35, 60, 100, 0]
-PASSED_PAWN_BONUS_EG = [0, 10, 20, 40, 70, 120, 200, 0]
+PASSED_PAWN_BONUS_MG = [0, 5, 15, 35, 75, 150, 200, 0]
+PASSED_PAWN_BONUS_EG = [0, 10, 20, 40, 80, 150, 220, 0]
 
 
 # ===========================================================================
@@ -324,12 +324,12 @@ _KS_FILES, _KS_NEAR_W, _KS_FAR_W, _KS_NEAR_B, _KS_FAR_B = _build_king_zones()
 # ---------------------------------------------------------------------------
 TEMPO_BONUS = 9
 
-_BISHOP_PAIR = _pk(36, 54)
-_ROOK_OPEN_FILE = _pk(27, 21)
+_BISHOP_PAIR = _pk(40, 60)
+_ROOK_OPEN_FILE = _pk(30, 24)
 _ROOK_SEMI_OPEN = _pk(15, 12)
-_ROOK_7TH = _pk(27, 36)    
-_DOUBLED_PAWN = _pk(18, 24)       
-_ISOLATED_PAWN = _pk(18, 24)
+_ROOK_7TH = _pk(40, 45)    
+_DOUBLED_PAWN = _pk(25, 25)       
+_ISOLATED_PAWN = _pk(20, 20)
 _CONNECTED_PASSED = _pk(24, 48)  
 _KNIGHT_OUTPOST = _pk(24, 12) 
 
@@ -512,26 +512,106 @@ def evaluate(board: chess.Board) -> int:
             - _popcount(bn & b_pawn_att & _RANKS_3_5)
         )
 
-    # --- 7. King Safety (Chess960-safe: dựa trên ô Vua thực tế) ---------------
+    # --- 7. King Safety (Chess960-safe: đường chéo mở, pawn shield động) ------
     if phase > KS_MIN_PHASE:
-        if 0 <= wk < 24:                       # Vua còn ở 3 hàng nhà (hàng 1-3)
+        occ = board.occupied
+
+        # An toàn Vua Trắng
+        w_ks_pen = 0
+        if 0 <= wk < 24:
             zone = _KS_FILES[wk]
-            lack = zone & ~files_w             # cột gần Vua không có Tốt nhà
-            s += (
-                _KS_SHIELD_NEAR * _popcount(wp & _KS_NEAR_W[wk])
-                + _KS_SHIELD_FAR * _popcount(wp & _KS_FAR_W[wk])
-                - _KS_OPEN_FILE * _popcount(lack & ~files_b)
-                - _KS_HALF_OPEN_FILE * _popcount(lack & files_b)
-            )
-        if bk >= 40:                           # Vua Đen còn ở hàng 6-8
+            lack = zone & ~files_w
+            w_ks_pen += _KS_OPEN_FILE * _popcount(lack & ~files_b)
+            w_ks_pen += _KS_HALF_OPEN_FILE * _popcount(lack & files_b)
+
+            # Cột Vua đứng là cột mở (không có Tốt nhà che chắn)
+            if not (full_w & (1 << (wk & 7))):
+                w_ks_pen += 45
+
+            # Pawn shield động: kiểm tra Tốt ở 1-2 hàng trước Vua
+            wk_f, wk_r = wk & 7, wk >> 3
+            shield_w = 0
+            for f in (wk_f - 1, wk_f, wk_f + 1):
+                if 0 <= f <= 7:
+                    for r in (wk_r + 1, wk_r + 2):
+                        if r <= 7 and (wp & (1 << (r * 8 + f))):
+                            shield_w += 1
+                            break
+            if shield_w == 0:
+                w_ks_pen += 70
+            elif shield_w == 1:
+                w_ks_pen += 35
+
+            # Đe dọa tia đường chéo từ Hậu và Tượng đối phương
+            b_bq = (bb_ | (queens & occ_b))
+            while b_bq:
+                lsb = b_bq & -b_bq
+                sq = lsb.bit_length() - 1
+                if chess.BB_RAYS[sq][wk]:
+                    blockers = chess.between(sq, wk) & occ
+                    cnt = blockers.bit_count()
+                    if cnt == 0:
+                        w_ks_pen += 60
+                    elif cnt == 1:
+                        w_ks_pen += 35
+                b_bq ^= lsb
+
+        # An toàn Vua Đen (đối xứng hoàn hảo)
+        b_ks_pen = 0
+        if bk >= 40:
             zone = _KS_FILES[bk]
             lack = zone & ~files_b
-            s -= (
-                _KS_SHIELD_NEAR * _popcount(bp & _KS_NEAR_B[bk])
-                + _KS_SHIELD_FAR * _popcount(bp & _KS_FAR_B[bk])
-                - _KS_OPEN_FILE * _popcount(lack & ~files_w)
-                - _KS_HALF_OPEN_FILE * _popcount(lack & files_w)
-            )
+            b_ks_pen += _KS_OPEN_FILE * _popcount(lack & ~files_w)
+            b_ks_pen += _KS_HALF_OPEN_FILE * _popcount(lack & files_w)
+
+            if not (full_b & (1 << (bk & 7))):
+                b_ks_pen += 45
+
+            bk_f, bk_r = bk & 7, bk >> 3
+            shield_b = 0
+            for f in (bk_f - 1, bk_f, bk_f + 1):
+                if 0 <= f <= 7:
+                    for r in (bk_r - 1, bk_r - 2):
+                        if r >= 0 and (bp & (1 << (r * 8 + f))):
+                            shield_b += 1
+                            break
+            if shield_b == 0:
+                b_ks_pen += 70
+            elif shield_b == 1:
+                b_ks_pen += 35
+
+            w_bq = (wb | (queens & occ_w))
+            while w_bq:
+                lsb = w_bq & -w_bq
+                sq = lsb.bit_length() - 1
+                if chess.BB_RAYS[sq][bk]:
+                    blockers = chess.between(sq, bk) & occ
+                    cnt = blockers.bit_count()
+                    if cnt == 0:
+                        b_ks_pen += 60
+                    elif cnt == 1:
+                        b_ks_pen += 35
+                w_bq ^= lsb
+
+        s -= _pk(w_ks_pen - b_ks_pen, 0)
+
+    # --- 7.5. Cân bằng động Mã vs Tượng theo Cấu trúc Trung tâm --------------
+    total_pawns = _popcount(pawns)
+    locked_d = bool((wp << 8) & bp & chess.BB_FILE_D)
+    locked_e = bool((wp << 8) & bp & chess.BB_FILE_E)
+    locked_center = (locked_d + locked_e) * 2
+
+    wn_count = _popcount(wn)
+    wb_count = _popcount(wb)
+    bn_count = _popcount(bn)
+    bb_count = _popcount(bb_)
+
+    if total_pawns >= 12 or locked_center >= 4:
+        s += _pk(25, 20) * (wn_count - bn_count)
+        s -= _pk(20, 20) * (wb_count - bb_count)
+    elif total_pawns <= 8:
+        s -= _pk(20, 20) * (wn_count - bn_count)
+        s += _pk(30, 30) * (wb_count - bb_count)
 
     # --- 8. Quyền nhập thành (Chess960): castling_rights = bitboard ô Xe ------
     cr = board.castling_rights

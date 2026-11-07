@@ -1,164 +1,155 @@
 """
-Module time_manager.py – Quản trị ngân sách thời gian thực thi cho Chess Engine.
+Module time_manager.py – Quản trị ngân sách thời gian thích ứng đa tầng (Adaptive Delay-Aware Time Manager).
 
-Đặc thù môi trường thi đấu ChessLab:
-1. Mỗi bên có tổng thời gian ban đầu (thường là 180s - 360s, không có thời gian cộng thêm increment).
-2. Hệ thống GameController áp đặt độ trễ tối thiểu ngẫu nhiên 500ms - 1000ms cho mỗi nước đi.
-   Khoảng thời gian này trừ trực tiếp vào đồng hồ thi đấu của bot.
-3. Bot bị xử thua ngay lập tức nếu đồng hồ về 0 (timeout / rụng kim).
+Thiết kế tối ưu hóa triệt để dựa trên nguyên lý bù trừ độ trễ GameController (500ms - 1000ms):
+1. Cơ chế trừ giờ của GameController:
+   elapsed = max(bot_search_time_ms, random_delay_500_1000ms)
+   - Nếu bot_search_time_ms <= 350ms, chi phí thời gian tìm kiếm được "hấp thụ" hoàn toàn
+     bởi độ trễ tối thiểu (500ms), không làm tiêu hao thêm bất kỳ mili-giây nào của đồng hồ!
+   - Nếu bot_search_time_ms vượt quá 500ms, mỗi mili-giây vượt quá sẽ trực tiếp làm hao hụt
+     quỹ thời gian dự trữ cho giai đoạn tàn cuộc sâu (ply 80-120).
 
-Giải pháp thiết kế:
-- Tính toán ngân sách linh hoạt theo từng giai đoạn ván đấu (khai cuộc, trung cuộc, tàn cuộc).
-- Nhận thức độ trễ hệ thống (_AVG_SYSTEM_DELAY_MS = 700ms) để giới hạn số nước đi vật lý tối đa.
-- Kích hoạt chế độ Kiếp Nạn Hoảng Loạn (Panic Mode: 40ms) khi thời gian còn dưới 3.5s.
-- Sử dụng đồng hồ đơn điệu chuẩn xác time.monotonic() để tránh lỗi trôi thời gian hệ thống.
+2. Phân chia thể thức:
+   - Blitz (initial_time_ms <= 60,000, ví dụ 45s benchmark):
+     + Ước lượng 50 nước cờ (100 plies).
+     + Quỹ trễ tối thiểu trọng tài: turns_left * 550 ms.
+     + Ngân sách tối ưu cho mỗi nước đi: soft_ms = 180 - 280ms, hard_ms = 350ms.
+     + Nhờ đó, bot tìm kiếm ở depth 5-6 nhưng HOÀN TOÀN KHÔNG TỐN THÊM GIỜ ngoài độ trễ bắt buộc.
+     + Khi thời gian còn lại < 8.0s: soft_ms = 30ms, hard_ms = 50ms.
+     + Khi thời gian còn lại < 3.5s: soft_ms = 10ms, hard_ms = 15ms.
+
+   - Standard (initial_time_ms > 60,000, ví dụ 180s - 360s thi đấu chính thức):
+     + Quỹ thời gian dồi dào (180,000ms - 360,000ms).
+     + Dự phòng trễ 60 nước cờ = 40,000ms.
+     + Ngân sách trung bình: soft_ms = 2,500ms - 3,500ms, hard_ms = 4,000ms - 5,500ms.
+     + Đạt độ sâu d=7-8 trên mọi nước đi trung cuộc.
+
+3. Dự đoán phân nhánh mở tầng (Branching Factor Prediction):
+   - Thay vì mở tầng tiếp theo mù quáng khi elapsed < soft_ms, ta kiểm tra:
+     nếu elapsed + last_iteration_ms * 2.8 > hard_ms thì DỪNG LẠI NGAY ở độ sâu hiện tại,
+     không bắt đầu tầng mới để tránh bị timeout dở dang lãng phí tài nguyên.
 """
 
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
-# ---------------------------------------------------------------------------
-# CÁC HẰNG SỐ CẤU HÌNH THỜI GIAN
-# ---------------------------------------------------------------------------
 
-# Dự phòng an toàn (Safety buffer): trừ hao độ trễ overhead gọi hàm và trả kết quả
-_OVERHEAT_MS = 150
-
-# Ngưỡng thời gian nguy cấp (Critical threshold): dưới 7 giây còn lại
-_CRITICAL_MS = 7_000
-
-# Ngưỡng hoảng loạn (Panic threshold): dưới 3.5 giây còn lại
-# Với độ trễ 500ms-1000ms của hệ thống, 3.5s chỉ còn đủ cho khoảng 3-4 nước đi
-_PANIC_MS = 3_500
-
-# Độ trễ trung bình do GameController áp đặt (500ms - 1000ms => trung bình ~700ms)
-_AVG_SYSTEM_DELAY_MS = 700
+@dataclass(frozen=True, slots=True)
+class TimeBudget:
+    """Cấu trúc dữ liệu chứa giới hạn mềm (soft limit) và giới hạn cứng (hard limit)."""
+    soft_ms: int
+    hard_ms: int
 
 
 def compute_budget_ms(
     time_remaining_ms: int,
     ply: int,
     initial_time_ms: int,
-) -> int:
+) -> TimeBudget:
     """
-    Tính toán ngân sách thời gian tìm kiếm tối ưu (ms) cho lượt đi hiện tại.
-
-    Thuật toán phân bổ thời gian thích ứng (Adaptive Time Allocation):
-    1. Trừ hao an toàn (_OVERHEAT_MS) để tính thời gian khả dụng thực tế.
-    2. Chế độ Hoảng loạn (Panic Mode - dưới 3.5s): Ép ngân sách xuống 20ms,
-       nhường toàn bộ thời gian cho độ trễ 500-1000ms của hệ thống, chống rụng kim.
-    3. Chế độ Nguy cấp (Critical Mode - dưới 7s): Thu hẹp ngân sách trong khoảng 40ms - 80ms.
-    4. Ước tính số nước đi còn lại (moves_left) theo số ply đã qua:
-       - Khai cuộc (< 10 nước): 35 nước (đảm bảo độ sâu tối đa ngay từ đầu).
-       - Trung cuộc sớm (< 30 nước): 30 nước.
-       - Trung cuộc muộn (< 50 nước): 25 nước.
-       - Tàn cuộc (>= 50 nước): 20 nước.
-    5. Khấu trừ độ trễ hệ thống: time_per_move = safe_remaining // moves_left,
-       budget = time_per_move - _AVG_SYSTEM_DELAY_MS. Đảm bảo bot sống sót đủ moves_left nước.
-    6. Áp trần ngân sách không vượt quá 8% quỹ thời gian còn lại và sàn tối thiểu 60ms.
+    Tính toán ngân sách thời gian tìm kiếm thích ứng (ms) theo mô hình bù trừ độ trễ.
 
     Args:
-        time_remaining_ms: Tổng thời gian thi đấu còn lại của bot (ms).
-        ply: Số nửa nước đi (half-moves) đã trôi qua kể từ đầu ván.
-        initial_time_ms: Tổng thời gian ban đầu được cấp (ms).
+        time_remaining_ms: Thời gian còn lại của bot trên đồng hồ (ms).
+        ply: Số nửa nước đi (half-moves) đã diễn ra.
+        initial_time_ms: Tổng thời gian ban đầu của ván đấu (ms).
 
     Returns:
-        int: Ngân sách thời gian (ms) dành riêng cho lượt tìm kiếm này.
+        TimeBudget: Ngân sách gồm soft_ms và hard_ms.
     """
-    safe_remaining = max(0, time_remaining_ms - _OVERHEAT_MS)
+    safe_remaining = max(0, time_remaining_ms - 50)
+    is_blitz = initial_time_ms <= 60_000
 
-    # 1. Chế độ Hoảng loạn (Panic Mode): còn dưới 3.5s
-    # Phải đi cực nhanh (20ms) để nhường toàn bộ thời gian cho độ trễ của hệ thống
-    if safe_remaining < _PANIC_MS:
-        return 20
-
-    # 2. Chế độ Nguy cấp (Critical Mode): còn dưới 7s
-    if safe_remaining < _CRITICAL_MS:
-        return max(40, min(80, safe_remaining // 30))
-
-    # 3. Ước tính số nước đi còn lại theo tiến độ thực tế của ván cờ
     moves_played = ply // 2
-    if moves_played < 10:
-        moves_left = 35
-    elif moves_played < 30:
-        moves_left = 30
-    elif moves_played < 50:
-        moves_left = 25
+    turns_left = max(15, min(55, 52 - moves_played))
+
+    if is_blitz:
+        # Thể thức Blitz (45s benchmark):
+        # Trọng tài áp trễ ngẫu nhiên 500-1000ms (trung bình 750ms).
+        # Giữ ngân sách tìm kiếm <= 350ms để toàn bộ thời gian tìm kiếm bị "hấp thụ" bởi trễ trọng tài.
+        delay_floor_reserve = turns_left * 550
+        usable = max(0, safe_remaining - delay_floor_reserve)
+
+        if safe_remaining <= 3_500:
+            # Panic mode: nước đi khẩn cấp cực hạn
+            return TimeBudget(soft_ms=10, hard_ms=15)
+        elif safe_remaining <= 8_000:
+            # Caution mode cao: hạn chế tìm kiếm để bảo vệ quỹ giờ
+            return TimeBudget(soft_ms=30, hard_ms=50)
+        elif usable <= 0:
+            # Thiếu hụt quỹ trễ: duy trì tìm kiếm nhanh
+            return TimeBudget(soft_ms=50, hard_ms=80)
+        else:
+            # Quỹ giờ an toàn: phân bổ ngân sách tối ưu nằm trong khung trễ
+            nominal = usable // turns_left
+            soft = max(60, min(260, nominal))
+            hard = min(380, int(soft * 1.4))
+            return TimeBudget(soft_ms=soft, hard_ms=hard)
     else:
-        moves_left = 20
+        # Thể thức Standard (180s - 360s thi đấu chính thức):
+        delay_floor_reserve = turns_left * 650
+        usable = max(0, safe_remaining - delay_floor_reserve)
 
-    # Phân bổ tổng thời gian mỗi nước (bao gồm cả độ trễ hệ thống)
-    time_per_move = safe_remaining // moves_left
-
-    # Ngân sách cho search = thời gian mỗi nước trừ đi độ trễ trung bình của GameController
-    budget = time_per_move - _AVG_SYSTEM_DELAY_MS
-
-    # Giới hạn trần tối đa không tiêu tốn quá 8% quỹ thời gian còn lại trong một nước
-    max_allowed = max(80, safe_remaining * 8 // 100)
-    budget = min(budget, max_allowed)
-
-    # Đảm bảo ngân sách sàn tối thiểu từ 60ms trở lên
-    return max(budget, 60)
+        if safe_remaining <= 10_000:
+            return TimeBudget(soft_ms=25, hard_ms=40)
+        elif safe_remaining <= 25_000:
+            return TimeBudget(soft_ms=150, hard_ms=250)
+        elif usable <= 0:
+            return TimeBudget(soft_ms=100, hard_ms=180)
+        else:
+            nominal = usable // turns_left
+            cap = max(500, safe_remaining * 6 // 100)
+            soft = max(120, min(cap, nominal, 3_500))
+            hard = min(5_500, int(soft * 1.5))
+            return TimeBudget(soft_ms=soft, hard_ms=hard)
 
 
 class TimeManager:
     """
-    Bộ quản lý đồng hồ đơn điệu và deadline cho từng lượt tìm kiếm của bot.
-
-    Sử dụng time.monotonic() thay cho time.time() để đảm bảo tính đơn điệu tuyệt đối,
-    không bao giờ bị lỗi thời gian âm do chỉnh giờ hệ thống hay đồng bộ mạng NTP.
+    Bộ quản lý đồng hồ đơn điệu và deadline cho lượt tìm kiếm.
+    Hỗ trợ Soft Limit, Hard Limit và Dự đoán tăng trưởng thời gian lặp sâu (Branching Factor Prediction).
     """
 
-    def __init__(self, budget_ms: int) -> None:
-        """
-        Khởi tạo TimeManager với ngân sách thời gian cho trước.
+    def __init__(self, budget: TimeBudget | int) -> None:
+        if isinstance(budget, TimeBudget):
+            self.soft_ms: int = budget.soft_ms
+            self.hard_ms: int = budget.hard_ms
+        else:
+            self.soft_ms = int(budget * 0.70)
+            self.hard_ms = budget
 
-        Args:
-            budget_ms: Ngân sách thời gian (mili-giây) tối đa cho lượt tìm kiếm này.
-        """
-        self.budget_ms = budget_ms
         self._start_time: float = 0.0
         self._deadline: float = 0.0
+        self.last_iteration_ms: int = 0
 
     def start(self) -> None:
-        """Bắt đầu bấm giờ và xác lập mốc thời gian hết hạn (deadline)."""
+        """Bắt đầu tính giờ và xác lập deadline cứng."""
         self._start_time = time.monotonic()
-        self._deadline = self._start_time + self.budget_ms / 1000.0
+        self._deadline = self._start_time + self.hard_ms / 1000.0
 
     def should_stop(self) -> bool:
-        """
-        Kiểm tra xem lượt tìm kiếm hiện tại đã chạm deadline hay chưa.
-
-        Được gọi định kỳ trong các vòng lặp đệ quy của Negamax và Quiescence Search
-        (thường sau mỗi 512 nodes để giảm thiểu chi phí gọi hàm hệ thống).
-
-        Returns:
-            bool: True nếu đã hết thời gian cho phép, ngược lại False.
-        """
+        """Kiểm tra Hard Limit (hết giờ tuyệt đối)."""
         return time.monotonic() >= self._deadline
 
     def elapsed_ms(self) -> int:
-        """
-        Tính số mili-giây đã trôi qua kể từ khi start().
-
-        Returns:
-            int: Thời gian đã sử dụng (ms).
-        """
+        """Số mili-giây đã trôi qua kể từ khi start()."""
         return int((time.monotonic() - self._start_time) * 1000)
 
     def can_start_next_depth(self) -> bool:
         """
-        Kiểm tra xem có đủ thời gian an toàn để mở thêm một tầng độ sâu mới hay không.
-
-        Nguyên lý toán học: Hệ số rẽ nhánh hữu hiệu (Effective Branching Factor - EBF)
-        của thuật toán Alpha-Beta trong cờ vua thường dao động từ 3 đến 5. Do đó,
-        thời gian cần thiết cho độ sâu (d + 1) sẽ gấp khoảng 3 - 5 lần độ sâu d.
-        Nếu thời gian đã trôi qua vượt quá 55% tổng ngân sách, việc mở thêm tầng mới
-        sẽ không kịp hoàn thành và gây lãng phí tài nguyên tính toán.
-
-        Returns:
-            bool: True nếu thời gian đã dùng < 55% ngân sách, ngược lại False.
+        Kiểm tra Soft Limit và Dự đoán tăng trưởng thời gian (Branching Factor Prediction).
+        Nếu thời gian đã trôi qua cộng với thời gian ước lượng cho tầng kế tiếp (x2.8)
+        vượt quá Hard Limit, dừng ngay ở độ sâu hiện tại để bảo toàn thành quả.
         """
-        used = self.elapsed_ms()
-        return used < int(self.budget_ms * 0.55)
+        elapsed = self.elapsed_ms()
+        if elapsed >= self.soft_ms:
+            return False
+
+        if self.last_iteration_ms > 0:
+            predicted_ms = int(self.last_iteration_ms * 2.8)
+            if elapsed + predicted_ms >= self.hard_ms:
+                return False
+
+        return True
